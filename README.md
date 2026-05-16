@@ -18,7 +18,9 @@ About • Features • Tech Stack • Getting Started • Configuration • Proj
 
 ### 🧩 About the Project
 
-AYANAMI-AGENT is a sophisticated AI agent system designed to streamline development workflows and provide intelligent assistance. Inspired by the iconic character Rei Ayanami from Neon Genesis Evangelion, this project combines cutting-edge AI capabilities with a sleek, minimalist interface to create a powerful and intuitive tool for developers.
+AYANAMI-AGENT is a sophisticated AI agent system designed to streamline development workflows and provide intelligent assistance. This project represents a significant evolution, building upon the foundations laid by previous endeavors such as the [MCP-SERVER-PRO](https://github.com/EduhxH/MCP-SERVER-PRO) and the [IA-agent-with-tools---](https://github.com/EduhxH/IA-agent-with-tools---). It also draws inspiration from the very first AI project, [AGENTE-IA](https://github.com/EduhxH/AGENTE-IA), marking a continuous journey in AI development.
+
+Inspired by the iconic character Rei Ayanami from Neon Genesis Evangelion, this project combines cutting-edge AI capabilities with a sleek, minimalist interface to create a powerful and intuitive tool for developers.
 
 It features a modular backend built with FastAPI and Python, integrating various specialized agents like the GitHub Agent for code analysis, an Email Agent for communication automation, and a unique Anime Agent for personalized recommendations. The frontend, crafted with Next.js and React, offers an intuitive user experience with a minimalist design and themed cursors, ensuring seamless interaction and a consistent aesthetic.
 
