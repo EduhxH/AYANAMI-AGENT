@@ -68,25 +68,32 @@ class AuthService:
         token = create_access_token(user.id, user.email)
         return {"access_token": token, "token_type": "bearer"}
 
-    async def _send_verification_email(self, email: str, code: str) -> None:
+async def _send_verification_email(self, email: str, code: str) -> None:
         """Envia o email com o código de verificação via Resend."""
         resend.api_key = self.settings.resend_api_key
         
-        resend.Emails.send({
-            "from": self.settings.from_email,
-            "to": email,
-            "subject": "Dev Agent — Check your email",
-            "html": f"""
-                <div style="font-family: monospace; max-width: 400px; margin: 40px auto;">
-                    <h2>Bem-vindo ao Dev Agent</h2>
-                    <p>O teu código de verificação é:</p>
-                    <div style="font-size: 36px; font-weight: bold; letter-spacing: 8px; 
-                                background: #f0f0f0; padding: 20px; text-align: center;">
-                        {code}
+        try:
+            resend.Emails.send({
+                "from": self.settings.from_email,
+                "to": email,
+                "subject": "Ayanami Agent — Verification Code",
+                "html": f"""
+                    <div style="font-family: 'Courier New', Courier, monospace; max-width: 400px; margin: 40px auto; background: #0a0a0c; color: #e2e8f0; padding: 30px; border: 1px solid #2d3748; border-radius: 4px;">
+                        <h2 style="color: #38bdf8; font-size: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-top: 0;">[ AYANAMI AGENT ]</h2>
+                        <p style="font-size: 14px; color: #94a3b8;">Protocolo de autenticação iniciado. O teu código de verificação é:</p>
+                        <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; 
+                                    background: #111827; color: #38bdf8; padding: 20px; text-align: center; border: 1px dashed #38bdf8; margin: 20px 0; border-radius: 4px;">
+                            {code}
+                        </div>
+                        <p style="color: #64748b; font-size: 11px; margin-bottom: 0;">
+                            > Este código expira em 15 minutos. Não partilhes esta chave.
+                        </p>
                     </div>
-                    <p style="color: #666; font-size: 12px;">
-                        Este código expira em 15 minutos.
-                    </p>
-                </div>
-            """,
-        })
+                """,
+            })
+        except Exception as e:
+            # Em vez de quebrar, marcas no log do Render
+            print(f"[AVISO DE TESTE]: Não foi possível enviar email para {email} devido às restrições do Resend. O utilizador foi registado sem verificação real, VOCE ESTA SUJEITA A TER A CONTA DELETADA.")
+            
+            # Opcional: Podes marcar no objeto do utilizador ou na resposta que esta conta
+            # entrou em modo de teste/sandbox para saberes que foi criada sem email.
