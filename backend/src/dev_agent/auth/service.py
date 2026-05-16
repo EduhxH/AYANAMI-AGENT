@@ -38,6 +38,7 @@ class AuthService:
         hashed = hash_password(password)
         user = await self.users.create(email, hashed)
 
+        # Corrigido: Agora está dentro da função e chama com o "_" inicial
         await self._send_verification_email(email, user.verification_code)
 
         return {"message": "Registo bem-sucedido. Verifica o teu email."}
@@ -68,7 +69,8 @@ class AuthService:
         token = create_access_token(user.id, user.email)
         return {"access_token": token, "token_type": "bearer"}
 
-async def _send_verification_email(self, email: str, code: str) -> None:
+    # Corrigido: Agora o método pertence oficialmente à classe AuthService
+    async def _send_verification_email(self, email: str, code: str) -> None:
         """Envia o email com o código de verificação via Resend."""
         resend.api_key = self.settings.resend_api_key
         
@@ -92,8 +94,4 @@ async def _send_verification_email(self, email: str, code: str) -> None:
                 """,
             })
         except Exception as e:
-            # Em vez de quebrar, marcas no log do Render
-            print(f"[AVISO DE TESTE]: Não foi possível enviar email para {email} devido às restrições do Resend. O utilizador foi registado sem verificação real, VOCE ESTA SUJEITA A TER A CONTA DELETADA.")
-            
-            # Opcional: Podes marcar no objeto do utilizador ou na resposta que esta conta
-            # entrou em modo de teste/sandbox para saberes que foi criada sem email.
+            print(f"[AVISO DE TESTE]: Não foi possível enviar email para {email} devido às restrições do Resend. O utilizador foi registado sem verificação real, VOCE ESTA SUJEITA A TER A CONTA DELETADA. Erro original: {e}")
