@@ -173,6 +173,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Eduardo Carvalho - [GitHub](https://github.com/EduhxH)
 
+---
+
+Made with 💜 by EduhxH
+
 ### Tags
 
 `ai-agent` `fastapi` `nextjs` `react` `python` `typescript` `developer-tools` `automation` `github-api` `email-automation` `llm` `groq` `mongodb` `evangelion` `rei-ayanami` `productivity` `ai` `agent-system` `fullstack` `web-development`
