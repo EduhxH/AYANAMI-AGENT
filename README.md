@@ -1,3 +1,5 @@
+<div align="center">
+
 # AYANAMI-AGENT
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white) ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white) ![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white) ![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black) ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
@@ -9,6 +11,8 @@ An intelligent AI agent system inspired by Evangelion, designed to streamline de
 🇺🇸 This project is documented and implemented entirely in American English.
 
 About • Features • Tech Stack • Getting Started • Configuration • Project Structure
+
+</div>
 
 ---
 
@@ -26,7 +30,7 @@ It features a modular backend built with FastAPI and Python, integrating various
 | :--- | :-------------- | :---------- |
 | 🐙 | **GitHub Agent** | Analyzes repositories, identifies issues, and provides suggestions for code quality and improvements. |
 | 📧 | **Email Agent** | Manages email interactions, automates responses, and helps organize communication. |
-| 🌸 | **Anime Agent** | A unique Easter egg feature that recommends anime based on a developer\'s technical profile, offering technical and cultural justifications. |
+| 🌸 | **Anime Agent** | A unique Easter egg feature that recommends anime based on a developer\\'s technical profile, offering technical and cultural justifications. |
 | ⚡ | **FastAPI Backend** | High-performance API built with FastAPI for robust and scalable agent orchestration. |
 | ⚛️ | **Next.js Frontend** | Intuitive and responsive web interface built with Next.js and React for seamless user interaction. |
 | 🍃 | **MongoDB Integration** | Utilizes MongoDB for flexible and scalable data storage for agent data and user profiles. |
@@ -188,12 +192,6 @@ Contributions are welcome! Please feel free to open issues or submit pull reques
 ### 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-### 📧 Contact
-
-Eduardo Carvalho - [GitHub](https://github.com/EduhxH)
 
 ---
 
