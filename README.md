@@ -10,11 +10,15 @@ An intelligent AI agent system inspired by Evangelion, designed to streamline de
 
 About • Features • Tech Stack • Getting Started • Configuration • Project Structure
 
+---
+
 ### 🧩 About the Project
 
 AYANAMI-AGENT is a sophisticated AI agent system designed to streamline development workflows and provide intelligent assistance. Inspired by the iconic character Rei Ayanami from Neon Genesis Evangelion, this project combines cutting-edge AI capabilities with a sleek, minimalist interface to create a powerful and intuitive tool for developers.
 
 It features a modular backend built with FastAPI and Python, integrating various specialized agents like the GitHub Agent for code analysis, an Email Agent for communication automation, and a unique Anime Agent for personalized recommendations. The frontend, crafted with Next.js and React, offers an intuitive user experience with a minimalist design and themed cursors, ensuring seamless interaction and a consistent aesthetic.
+
+---
 
 ### ✨ Features
 
@@ -22,11 +26,13 @@ It features a modular backend built with FastAPI and Python, integrating various
 | :--- | :-------------- | :---------- |
 | 🐙 | **GitHub Agent** | Analyzes repositories, identifies issues, and provides suggestions for code quality and improvements. |
 | 📧 | **Email Agent** | Manages email interactions, automates responses, and helps organize communication. |
-| 🌸 | **Anime Agent** | A unique Easter egg feature that recommends anime based on a developer's technical profile, offering technical and cultural justifications. |
+| 🌸 | **Anime Agent** | A unique Easter egg feature that recommends anime based on a developer\'s technical profile, offering technical and cultural justifications. |
 | ⚡ | **FastAPI Backend** | High-performance API built with FastAPI for robust and scalable agent orchestration. |
 | ⚛️ | **Next.js Frontend** | Intuitive and responsive web interface built with Next.js and React for seamless user interaction. |
 | 🍃 | **MongoDB Integration** | Utilizes MongoDB for flexible and scalable data storage for agent data and user profiles. |
 | 🧠 | **Groq LLM Integration** | Leverages Groq for fast and efficient language model interactions across all agents. |
+
+---
 
 ### 🛠️ Tech Stack
 
@@ -41,6 +47,8 @@ It features a modular backend built with FastAPI and Python, integrating various
 | TypeScript | Superset of JavaScript for Type Safety |
 | TailwindCSS | Utility-First CSS Framework for Styling |
 
+---
+
 ### 📦 Prerequisites
 
 Before getting started, make sure you have the following installed:
@@ -49,6 +57,8 @@ Before getting started, make sure you have the following installed:
 -   Node.js 18+
 -   pnpm (recommended package manager for frontend)
 -   MongoDB instance (local or cloud-hosted)
+
+---
 
 ### 🚀 Getting Started
 
@@ -80,6 +90,8 @@ To get AYANAMI-AGENT up and running locally, follow these steps:
     # cp .env.example .env.local
     pnpm dev
     ```
+
+---
 
 ### ⚙️ Configuration
 
@@ -123,6 +135,8 @@ FRONTEND_URL=http://localhost:3000
 # TAVILY_API_KEY=tvly-...
 ```
 
+---
+
 ### 📁 Project Structure
 
 ```
@@ -153,6 +167,8 @@ AYANAMI-AGENT/
 └── vercel.json                     # Vercel deployment configuration
 ```
 
+---
+
 ### 🧠 What I Learned
 
 -   **Modular AI Agent Design:** Implementing a flexible and extensible architecture for AI agents, allowing for easy integration of new functionalities.
@@ -161,13 +177,19 @@ AYANAMI-AGENT/
 -   **External API Integration:** Developing robust connectors for services like GitHub and Google (Email) to extend agent capabilities.
 -   **Thematic Design Implementation:** Incorporating a distinct aesthetic (Evangelion/Rei Ayanami) into both the functional and visual aspects of the project.
 
+---
+
 ### 🤝 Contributing
 
 Contributions are welcome! Please feel free to open issues or submit pull requests.
 
+---
+
 ### 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
 
 ### 📧 Contact
 
@@ -176,6 +198,8 @@ Eduardo Carvalho - [GitHub](https://github.com/EduhxH)
 ---
 
 Made with 💜 by EduhxH
+
+---
 
 ### Tags
 
