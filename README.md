@@ -11,7 +11,7 @@
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
 
-*An intelligent AI agent system inspired by Neon Genesis Evangelion — designed to streamline development workflows through modular agents and a sleek, minimalist interface.*
+*A modular AI agent system designed to streamline development workflows — combining intelligent automation, LLM orchestration, and a clean full-stack interface.*
 
 🇺🇸 This project is documented and implemented entirely in American English.
 
