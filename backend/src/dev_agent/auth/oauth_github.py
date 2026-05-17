@@ -1,4 +1,5 @@
 import httpx
+from urllib.parse import urlencode
 from dev_agent.core.config import get_settings
 
 
@@ -22,7 +23,7 @@ The user goes to GitHub and authorizes the app.
         }
         if state:
             params["state"] = state
-        query = "&".join(f"{k}={v}" for k, v in params.items())
+        query = urlencode(params)
         return f"{self.AUTHORIZE_URL}?{query}"
 
     async def exchange_code_for_token(self, code: str) -> str:

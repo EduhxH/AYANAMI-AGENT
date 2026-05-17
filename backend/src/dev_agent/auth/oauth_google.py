@@ -1,9 +1,10 @@
 import httpx
+from urllib.parse import urlencode
 from dev_agent.core.config import get_settings
 
 
 class GoogleOAuth:
-    AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/auth"
+    AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     USER_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
@@ -21,7 +22,7 @@ class GoogleOAuth:
         }
         if state:
             params["state"] = state
-        query = "&".join(f"{k}={v}" for k, v in params.items())
+        query = urlencode(params)
         return f"{self.AUTHORIZE_URL}?{query}"
 
     async def exchange_code_for_token(self, code: str) -> dict:
