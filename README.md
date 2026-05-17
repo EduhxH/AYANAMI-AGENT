@@ -25,6 +25,32 @@ Inspired by Rei Ayanami from Neon Genesis Evangelion, the project combines a hig
 
 ---
 
+## 🚧 Current State — Read Before Testing
+
+This project is in active development. You **will** encounter bugs, particularly in the interface. Some flows are incomplete, and not all features work end-to-end in the current build.
+
+Known limitations:
+- **Email verification is not fully functional.** Use the demo account below to skip registration.
+- **UI bugs are expected** — layout inconsistencies and broken states exist across different screen sizes and interactions.
+- GitHub and Google integrations require valid OAuth credentials; the demo account does not have these connected.
+
+If you find a bug, opening an issue is appreciated.
+
+---
+
+## 🧪 Try It
+
+A demo account is available for testing the chat and AI features without going through registration.
+
+> **Email:** `demoteste@teste.com`
+> **Password:** `pass123`
+
+This account has no sensitive data and exists solely for testing. Do not use it for anything other than exploring the interface.
+
+Live demo: [ayanami-agent.vercel.app](https://ayanami-agent.vercel.app)
+
+---
+
 ## 🆕 What's New
 
 ### v2.0 — File Analysis & Integration Stability
