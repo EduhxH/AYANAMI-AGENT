@@ -1,5 +1,7 @@
 import httpx
 from urllib.parse import urlencode
+from typing import Optional
+from fastapi import Request
 from dev_agent.core.config import get_settings
 
 
@@ -11,14 +13,23 @@ class GitHubOAuth:
     def __init__(self):
         self.settings = get_settings()
 
-    def get_authorization_url(self, state: str | None = None) -> str:
+    def get_authorization_url(
+        self,
+        state: str | None = None,
+        request: Optional[Request] = None,
+    ) -> str:
         """
       Generates the URL to which the frontend redirects the user.
 The user goes to GitHub and authorizes the app.
         """
+        redirect_uri = self.settings.github_redirect_uri
+        if request and redirect_uri.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
+            redirect_uri = f"{str(request.base_url).rstrip('/')}" \
+                "/auth/callback/github"
+
         params = {
             "client_id": self.settings.github_client_id,
-            "redirect_uri": self.settings.github_redirect_uri,
+            "redirect_uri": redirect_uri,
             "scope": "repo user:email",
         }
         if state:

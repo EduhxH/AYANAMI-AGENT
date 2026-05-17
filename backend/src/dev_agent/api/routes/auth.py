@@ -117,11 +117,14 @@ async def me(current_user=Depends(get_current_user)):
 # ── OAuth GitHub ─────────────────────────────────────────────────
 
 @router.get("/github")
-async def github_login(current_user=Depends(get_current_user)):
+async def github_login(
+    request: Request,
+    current_user=Depends(get_current_user),
+):
     """Devolve o URL para onde o frontend redireciona o utilizador."""
     oauth = GitHubOAuth()
     state = create_oauth_state(current_user.id)
-    return {"url": oauth.get_authorization_url(state=state)}
+    return {"url": oauth.get_authorization_url(state=state, request=request)}
 
 
 @router.get("/callback/github")
@@ -178,10 +181,13 @@ async def github_callback(
 # ── OAuth Google ─────────────────────────────────────────────────
 
 @router.get("/google")
-async def google_login(current_user=Depends(get_current_user)):
+async def google_login(
+    request: Request,
+    current_user=Depends(get_current_user),
+):
     oauth = GoogleOAuth()
     state = create_oauth_state(current_user.id)
-    return {"url": oauth.get_authorization_url(state=state)}
+    return {"url": oauth.get_authorization_url(state=state, request=request)}
 
 
 @router.get("/callback/google")

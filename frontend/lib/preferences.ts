@@ -15,7 +15,14 @@ export interface UserPreferencesUpdate {
   agent_instructions?: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function getApiUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (configured) return configured;
+  if (typeof window !== "undefined") return window.location.origin;
+  return "http://localhost:8000";
+}
+
+const API_URL = getApiUrl();
 
 async function preferencesRequest<T>(
   path: string,
@@ -67,6 +74,10 @@ export const preferencesApi = {
   resolveAvatarUrl: (avatar_url: string) => {
     if (!avatar_url) return "";
     if (avatar_url.startsWith("http")) return avatar_url;
-    return `${API_URL}${avatar_url}`;
+    try {
+      return new URL(avatar_url, API_URL).toString();
+    } catch {
+      return `${API_URL}${avatar_url}`;
+    }
   },
 };

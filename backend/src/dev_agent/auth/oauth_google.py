@@ -1,5 +1,7 @@
 import httpx
 from urllib.parse import urlencode
+from typing import Optional
+from fastapi import Request
 from dev_agent.core.config import get_settings
 
 
@@ -11,10 +13,19 @@ class GoogleOAuth:
     def __init__(self):
         self.settings = get_settings()
 
-    def get_authorization_url(self, state: str | None = None) -> str:
+    def get_authorization_url(
+        self,
+        state: str | None = None,
+        request: Optional[Request] = None,
+    ) -> str:
+        redirect_uri = self.settings.google_redirect_uri
+        if request and redirect_uri.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
+            redirect_uri = f"{str(request.base_url).rstrip('/')}" \
+                "/auth/callback/google"
+
         params = {
             "client_id": self.settings.google_client_id,
-            "redirect_uri": self.settings.google_redirect_uri,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
             "access_type": "offline",   # para receber refresh_token

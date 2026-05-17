@@ -48,6 +48,13 @@ export function DashboardChat() {
   const [error, setError] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [pendingFile, setPendingFile] = useState<{
+    name: string;
+    content: string;
+    preview: string;
+    fileCount: number;
+  } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -70,20 +77,32 @@ export function DashboardChat() {
 
   async function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || loading) return;
+    if ((!trimmed && !pendingFile) || loading) return;
     setError("");
     setQuery("");
-    addMessage({ role: "user", content: trimmed });
     setLoading(true);
     document.body.classList.add("waiting");
+
+    const userMessage = pendingFile
+      ? `Ficheiro anexado: ${pendingFile.name}${trimmed ? ` — ${trimmed}` : ""}`
+      : trimmed;
+
+    const backendQuery = pendingFile
+      ? `Ficheiro: ${pendingFile.name}\nConteúdo:\n${pendingFile.content}\n\n${trimmed ||
+          "Resume o conteúdo do ficheiro em poucas frases."}`
+      : trimmed;
+
+    addMessage({ role: "user", content: userMessage });
+
     try {
-      const res = await api.query(trimmed);
+      const res = await api.query(backendQuery);
       addMessage({
         role: "assistant",
         content: res.summary || "Sem resposta.",
       });
       saveQueryToHistory(res);
       window.dispatchEvent(new Event("ayanami-history-updated"));
+      setPendingFile(null);
     } catch (err) {
       setError(getAuthErrorMessage(err));
     } finally {
@@ -244,6 +263,30 @@ export function DashboardChat() {
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
         className="shrink-0 border-t border-theme bg-main px-4 py-4 md:px-8"
       >
+        {pendingFile && (
+          <div className="mx-auto mb-4 max-w-2xl rounded-2xl border border-theme bg-[#111a23] px-4 py-3 text-sm text-primary">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold">Ficheiro anexado: {pendingFile.name}</p>
+                <p className="text-xs text-muted">
+                  {pendingFile.fileCount > 1
+                    ? `${pendingFile.fileCount} ficheiros extraídos`
+                    : "Ficheiro pronto para análise."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="self-start rounded-full border border-theme px-3 py-1 text-xs text-accent transition hover:bg-accent-muted hover:text-accent"
+                onClick={() => setPendingFile(null)}
+              >
+                Remover
+              </button>
+            </div>
+            <p className="mt-3 max-h-28 overflow-hidden whitespace-pre-wrap text-[13px] text-muted">
+              {pendingFile.preview}
+            </p>
+          </div>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -256,9 +299,47 @@ export function DashboardChat() {
               type="button"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-accent-muted hover:text-accent"
               aria-label="Anexar"
+              onClick={() => fileRef.current?.click()}
             >
               <Plus className="h-5 w-5" />
             </button>
+            <input
+              ref={fileRef}
+              type="file"
+              className="sr-only"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                try {
+                  setLoading(true);
+                  setError("");
+                  const res = await api.uploadFile(f as File);
+                  const files = res.files || [];
+                  const content = files
+                    .map((ff: any) => `${ff.name}\n\n${ff.content}`)
+                    .join("\n\n---\n\n");
+                  const preview = files
+                    .slice(0, 3)
+                    .map((ff: any) => `${ff.name}: ${ff.content.slice(0, 180)}`)
+                    .join("\n\n");
+
+                  setPendingFile({
+                    name: f.name,
+                    content: content.slice(0, 4000),
+                    preview:
+                      files.length > 1
+                        ? `${files.length} ficheiros processados. ${preview}`
+                        : preview,
+                    fileCount: files.length,
+                  });
+                } catch (err) {
+                  setError(getAuthErrorMessage(err));
+                } finally {
+                  setLoading(false);
+                  if (fileRef.current) fileRef.current.value = "";
+                }
+              }}
+            />
             <textarea
               id="chat-input"
               value={query}
@@ -270,12 +351,12 @@ export function DashboardChat() {
                 }
               }}
               rows={1}
-              placeholder="Escreve uma mensagem..."
+              placeholder={pendingFile ? "Escreve uma pergunta ou envia para resumir o ficheiro anexado..." : "Escreve uma mensagem..."}
               className="max-h-32 min-h-[44px] flex-1 resize-none bg-transparent py-2.5 text-sm text-primary placeholder:text-muted focus:outline-none"
             />
             <button
               type="submit"
-              disabled={loading || !query.trim()}
+              disabled={loading || (!query.trim() && !pendingFile)}
               aria-label="Enviar"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-[#0a1218] transition-opacity disabled:opacity-40"
             >

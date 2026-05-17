@@ -9,8 +9,14 @@ import type {
   User,
 } from "./types";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function getApiUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (configured) return configured;
+  if (typeof window !== "undefined") return window.location.origin;
+  return "http://localhost:8000";
+}
+
+const API_URL = getApiUrl();
 
 export class ApiError extends Error {
   constructor(
@@ -126,4 +132,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ anime_title, reason }),
     }),
+  uploadFile: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    // We must not set Content-Type so the browser sets the multipart boundary
+    const res = await fetch(`${API_URL}/files/upload`, {
+      method: "POST",
+      headers: (() => {
+        const h = new Headers();
+        const token = getToken();
+        if (token) h.set("Authorization", `Bearer ${token}`);
+        return h;
+      })(),
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(text || res.statusText, res.status);
+    }
+    return res.json();
+  },
 };

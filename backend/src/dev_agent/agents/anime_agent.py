@@ -1,5 +1,6 @@
 from groq import AsyncGroq
 import json
+import re
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.models import AgentType, AgentResult
@@ -71,6 +72,12 @@ class AnimeAgent(BaseAgent):
         try:
             return json.loads(content)
         except json.JSONDecodeError:
+            match = re.search(r"(\{.*\})", content, re.S)
+            if match:
+                try:
+                    return json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
             return {"recommendations": []}
 
     async def critique_suggestion(self, anime_title: str, user_reason: str) -> dict:
@@ -91,7 +98,7 @@ class AnimeAgent(BaseAgent):
                 
                 Faz uma crítica honesta desta sugestão.
                 Diz se concordas ou discordas e porquê.
-                Responde com JSON:
+                Responde somente com o objeto JSON abaixo, sem texto adicional:
                 {{
                     "approved": true/false,
                     "critique": "A tua análise crítica...",
@@ -107,4 +114,10 @@ class AnimeAgent(BaseAgent):
         try:
             return json.loads(content)
         except json.JSONDecodeError:
+            match = __import__("re").search(r"(\{.*\})", content, __import__("re").S)
+            if match:
+                try:
+                    return json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
             return {"approved": False, "critique": "Não foi possível analisar.", "score": 0, "tags": []}

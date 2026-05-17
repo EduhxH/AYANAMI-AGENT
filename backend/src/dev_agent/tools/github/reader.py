@@ -1,5 +1,8 @@
 import httpx
 from typing import List, Dict, Optional
+import io
+import zipfile
+import base64
 
 
 class GitHubReader:
@@ -65,7 +68,81 @@ class GitHubReader:
             if await self.repo_exists(candidate):
                 return candidate
 
+        # Fallback: use GitHub search API to find public repositories by name
+        async with httpx.AsyncClient() as client:
+            q = f"{name_hint} in:name"
+            response = await client.get(
+                f"{self.BASE_URL}/search/repositories",
+                headers=self.headers,
+                params={"q": q, "per_page": 5, "sort": "stars", "order": "desc"},
+            )
+            if response.status_code == 200:
+                items = response.json().get("items", [])
+                if items:
+                    return items[0]["full_name"]
+
         return None
+
+    async def get_repo_summary(self, repo: str) -> Dict:
+        """Return basic metadata and README excerpt for a repo."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{self.BASE_URL}/repos/{repo}", headers=self.headers)
+            if resp.status_code != 200:
+                raise ValueError(f"Erro ao obter metadados do repo: {resp.status_code}")
+            meta = resp.json()
+
+            # Try README
+            readme = None
+            r = await client.get(f"{self.BASE_URL}/repos/{repo}/readme", headers=self.headers)
+            if r.status_code == 200:
+                rd = r.json()
+                if rd.get("content"):
+                    try:
+                        content = base64.b64decode(rd["content"]).decode("utf-8", errors="ignore")
+                        readme = content[:2000]
+                    except Exception:
+                        readme = None
+
+            return {
+                "full_name": meta.get("full_name"),
+                "description": meta.get("description"),
+                "stars": meta.get("stargazers_count"),
+                "language": meta.get("language"),
+                "readme": readme,
+                "html_url": meta.get("html_url"),
+            }
+
+    async def get_repo_archive_files(self, repo: str) -> List[Dict]:
+        """Download the repository zipball and extract text and small images for analysis."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{self.BASE_URL}/repos/{repo}/zipball", headers=self.headers)
+            if response.status_code != 200:
+                raise ValueError("Não foi possível descarregar o arquivo do repositório")
+
+            z = zipfile.ZipFile(io.BytesIO(response.content))
+            files: List[Dict] = []
+            for info in z.infolist():
+                name = info.filename
+                if info.is_dir():
+                    continue
+                lower = name.lower()
+                try:
+                    with z.open(info) as fp:
+                        data = fp.read()
+                        if lower.endswith((".md", ".py", ".js", ".ts", ".txt", ".java", ".go")):
+                            text = data.decode("utf-8", errors="ignore")
+                            files.append({"name": name.split("/", 1)[-1], "path": name, "content": text[:3000]})
+                        elif lower.endswith((".png", ".jpg", ".jpeg", ".gif")):
+                            b64 = base64.b64encode(data).decode("ascii")
+                            files.append({"name": name.split("/", 1)[-1], "path": name, "content": f"[IMAGE base64:{len(b64)}]"})
+                        elif lower.endswith(".zip"):
+                            # skip nested zips
+                            files.append({"name": name.split("/", 1)[-1], "path": name, "content": "ZIP file"})
+                except Exception:
+                    continue
+                if len(files) >= 20:
+                    break
+            return files
 
     async def repo_exists(self, repo: str) -> bool:
         async with httpx.AsyncClient() as client:
@@ -101,19 +178,37 @@ class GitHubReader:
 
             for item in items:
                 if item.get("type") == "file" and item["name"].endswith(
-                    (".py", ".js", ".ts", ".tsx", ".go", ".java", ".md")
+                    (".py", ".js", ".ts", ".tsx", ".go", ".java", ".md", ".txt", ".json", ".yaml", ".yml", ".zip", ".png", ".jpg", ".jpeg", ".gif")
                 ):
                     content_response = await client.get(
                         item["download_url"],
                         headers=self.headers,
                     )
-                    files.append(
-                        {
-                            "name": item["name"],
-                            "path": item["path"],
-                            "content": content_response.text[:3000],
-                        }
-                    )
+                    if item["name"].lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+                        size = len(content_response.content)
+                        files.append({"name": item["name"], "path": item["path"], "content": f"[IMAGE {item['name']} size={size}]"})
+                    elif item["name"].lower().endswith(".zip"):
+                        try:
+                            z = zipfile.ZipFile(io.BytesIO(content_response.content))
+                            for zi in z.infolist()[:10]:
+                                if zi.is_dir():
+                                    continue
+                                with z.open(zi) as fp:
+                                    try:
+                                        text = fp.read().decode("utf-8", errors="ignore")
+                                        files.append({"name": zi.filename.split("/",1)[-1], "path": zi.filename, "content": text[:2000]})
+                                    except Exception:
+                                        continue
+                        except Exception:
+                            files.append({"name": item["name"], "path": item["path"], "content": "ZIP file (could not extract)"})
+                    else:
+                        files.append(
+                            {
+                                "name": item["name"],
+                                "path": item["path"],
+                                "content": content_response.text[:3000],
+                            }
+                        )
                 elif item.get("type") == "dir" and len(files) < 5:
                     try:
                         sub_files = await self.get_repo_files(repo, item["path"])

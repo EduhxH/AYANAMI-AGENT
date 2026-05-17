@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from dev_agent.core.config import get_settings
 from dev_agent.database.connection import connect_to_mongodb, close_mongodb_connection
-from dev_agent.api.routes import auth, query, health, anime
+from dev_agent.api.routes import auth, query, health, anime, files
 from dev_agent.bootstrap import register_extensions
 
 settings = get_settings()
@@ -27,6 +27,7 @@ app.include_router(auth.router)
 app.include_router(query.router)
 app.include_router(health.router)
 app.include_router(anime.router)
+app.include_router(files.router)
 
 # 2. Registar extensões do bootstrap (executado ANTES do CORS)
 register_extensions(app)

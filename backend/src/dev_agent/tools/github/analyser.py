@@ -38,7 +38,17 @@ class GitHubAnalyser:
         )
         
         content = response.choices[0].message.content
+        # Tentar extrair o primeiro bloco JSON se a resposta contiver texto adicional.
         try:
             return json.loads(content)
         except json.JSONDecodeError:
+            # tentar encontrar o primeiro '{' até o seu correspondente '}' simples
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                maybe = content[start:end+1]
+                try:
+                    return json.loads(maybe)
+                except Exception:
+                    pass
             return {"issues": [], "suggestions": ["Análise concluída"], "quality_score": 5}
