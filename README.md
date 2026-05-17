@@ -1,3 +1,5 @@
+<div align="center">
+
 # AYANAMI-AGENT
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -9,15 +11,29 @@
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
 
-> An intelligent AI agent system inspired by Neon Genesis Evangelion — designed to streamline development workflows through modular agents and a sleek, minimalist interface.
+*An intelligent AI agent system inspired by Neon Genesis Evangelion — designed to streamline development workflows through modular agents and a sleek, minimalist interface.*
 
 🇺🇸 This project is documented and implemented entirely in American English.
+
+</div>
 
 -----
 
 > [!WARNING]
 > **Account registration is currently disabled.**
 > The email verification flow (powered by [Resend](https://resend.com)) was one of the last features added to this project and has not yet been activated. As a result, the sign-up functionality is unavailable at this time.
+
+-----
+
+> [!NOTE]
+> **Want to try the live demo?** Since registration is disabled, use the test account below to log in at [ayanami-agent.vercel.app](https://ayanami-agent.vercel.app).
+> 
+> ```
+> Email:    teste001@gmail.com
+> Password: pass123
+> ```
+> 
+> ⚠️ This is a shared account — please don’t change the password or delete any data.
 
 -----
 
