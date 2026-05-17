@@ -1,5 +1,3 @@
-<div align="center">
-
 # AYANAMI-AGENT
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -11,127 +9,105 @@
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
 
-*A modular AI agent system designed to streamline development workflows — combining intelligent automation, LLM orchestration, and a clean full-stack interface.*
-
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-ayanami--agent.vercel.app-6366f1?style=for-the-badge&logo=vercel&logoColor=white)](https://ayanami-agent.vercel.app)
+> An intelligent AI agent system inspired by Evangelion — modular agents for GitHub analysis, email automation, and file-level code review, built on FastAPI + Next.js.
 
 🇺🇸 This project is documented and implemented entirely in American English.
 
-</div>
+**[About](#-about) · [Try It](#-try-it) · [What's New](#-whats-new) · [Features](#-features) · [Tech Stack](#️-tech-stack) · [Getting Started](#-getting-started) · [Configuration](#️-configuration) · [Project Structure](#-project-structure)**
 
------
-
-> [!WARNING]
-> **Account registration is currently disabled.**
-> The email verification flow (powered by [Resend](https://resend.com)) was one of the last features added to this project and has not yet been activated. As a result, the sign-up functionality is unavailable at this time.
-
------
-
-> [!NOTE]
-> **Want to try the live demo?** Since registration is disabled, use the test account below to log in at [ayanami-agent.vercel.app](https://ayanami-agent.vercel.app).
-> 
-> ```
-> Email:    teste001@gmail.com
-> Password: pass123
-> ```
-> 
-> ⚠️ This is a shared account — please don’t change the password or delete any data.
-
------
-
-## Table of Contents
-
-- [About](#-about)
-- [Features](#-features)
-- [Tech Stack](#️-tech-stack)
-- [Prerequisites](#-prerequisites)
-- [Getting Started](#-getting-started)
-- [Configuration](#️-configuration)
-- [Project Structure](#-project-structure)
-- [Architecture Overview](#️-architecture-overview)
-- [Known Limitations](#️-known-limitations)
-- [What I Learned](#-what-i-learned)
-
------
+---
 
 ## 🧩 About
 
-AYANAMI-AGENT is a modular AI agent system built to assist developers with intelligent, context-aware automation. It represents a significant leap forward from earlier projects — including [AGENTE-IA](https://github.com/EduhxH/AGENTE-IA), [IA-agent-with-tools](https://github.com/EduhxH/IA-agent-with-tools---), and [MCP-SERVER-PRO](https://github.com/EduhxH/MCP-SERVER-PRO) — and marks a natural evolution in architecture, tooling, and scope.
+AYANAMI-AGENT is a modular AI agent system designed to streamline development workflows. It builds on the foundations of [MCP-SERVER-PRO](https://github.com/EduhxH/MCP-SERVER-PRO), [IA-agent-with-tools---](https://github.com/EduhxH/IA-agent-with-tools---), and [AGENTE-IA](https://github.com/EduhxH/AGENTE-IA) — each iteration pushing further into practical agent orchestration.
 
-The system combines a high-performance FastAPI backend with a Next.js frontend, orchestrating specialized agents for code analysis, email automation, and developer productivity — all powered by Groq’s fast LLM inference.
+Inspired by Rei Ayanami from Neon Genesis Evangelion, the project combines a high-performance FastAPI backend with a minimalist Next.js interface. Agents handle real tasks: reading your repositories, managing emails, analyzing uploaded code, and recommending anime based on your technical profile.
 
------
+---
+
+## 🆕 What's New
+
+### v2.0 — File Analysis & Integration Stability
+
+**File Upload & Analysis System**
+The most significant capability addition. The agent can now receive files directly — source code, documents, and compressed archives — and process their contents as part of any task. Uploading a `.zip` of a project allows the agent to analyze the full codebase in a single interaction, without manual file-by-file sharing.
+
+**GitHub & Google Integration Fixes**
+Resolved critical authentication failures in both the GitHub and Google connectors. OAuth flows and API communication are now stable, ensuring repository reads and email operations work reliably end-to-end.
+
+**UI & Repository Cleanup**
+Interface refinements to tighten alignment with the Evangelion aesthetic. Repository structure cleaned up — removed artifacts like `.claude/` — making the codebase ready for external contributors.
+
+---
 
 ## ✨ Features
 
-|Agent / Component         |Description                                                                                        |
-|--------------------------|---------------------------------------------------------------------------------------------------|
-|🐙 **GitHub Agent**        |Analyzes repositories, identifies code quality issues, and suggests targeted improvements.         |
-|📧 **Email Agent**         |Automates email interactions and helps organize developer communication workflows.                 |
-|🌸 **Anime Agent**         |A hidden feature that generates personalized recommendations based on the user’s technical profile.|
-|⚡ **FastAPI Backend**     |High-performance, async-ready API powering all agent orchestration and routing logic.              |
-|⚛️ **Next.js Frontend**    |Responsive, minimalist UI built with Next.js and React for a seamless user experience.             |
-|🍃 **MongoDB Integration** |Flexible, scalable data storage for agent state, user profiles, and session data.                  |
-|🧠 **Groq LLM Integration**|Fast language model inference via Groq, used across all agents for reasoning and generation.       |
+| Agent / Component | Description |
+|---|---|
+| 🐙 **GitHub Agent** | Authenticates via OAuth, reads repositories, identifies issues, and suggests code quality improvements. |
+| 📧 **Email Agent** | Connects to Google to automate email responses and organize communication. |
+| 📁 **File Analysis** | Accepts file uploads (source code, documents, `.zip` archives) and processes their contents for contextual analysis. |
+| 🌸 **Anime Agent** | Recommends anime based on your technical stack and developer profile — with genuine cultural and technical justifications. |
+| 🧠 **Agent Orchestrator** | Dispatches tasks across agents dynamically, with context-aware planning per request. |
 
------
+---
 
 ## 🛠️ Tech Stack
 
-|Technology  |Role                            |
-|------------|--------------------------------|
-|Python 3.11+|Core backend language           |
-|FastAPI     |Backend API framework           |
-|MongoDB     |NoSQL database                  |
-|Groq        |LLM provider                    |
-|Next.js     |React framework for the frontend|
-|React       |UI library                      |
-|TypeScript  |Type-safe JavaScript            |
-|TailwindCSS |Utility-first styling           |
+| Layer | Technology | Role |
+|---|---|---|
+| **Backend** | Python 3.11+ | Core runtime |
+| | FastAPI | REST API + agent routing |
+| | Groq (`llama-3.3-70b`, `compound`) | LLM inference |
+| | MongoDB Atlas | Persistent storage |
+| **Frontend** | Next.js + React | UI framework |
+| | TypeScript | Type safety |
+| | TailwindCSS | Styling |
+| **Integrations** | GitHub OAuth + API | Repository access |
+| | Google OAuth + Gmail | Email automation |
+| | Resend | Transactional email |
 
------
+---
 
 ## 📦 Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- `pnpm` (recommended for frontend)
+- `pnpm` (recommended)
 - MongoDB instance (local or Atlas)
+- Groq API key
 
------
+---
 
 ## 🚀 Getting Started
 
-**1. Clone the repository**
-
+**1. Clone**
 ```bash
 git clone https://github.com/EduhxH/AYANAMI-AGENT.git
 cd AYANAMI-AGENT
 ```
 
-**2. Backend setup**
-
+**2. Backend**
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env   # fill in your credentials
+cp .env.example .env       # fill in your credentials
 uvicorn dev_agent.api.app:app --reload
 ```
 
-**3. Frontend setup**
-
+**3. Frontend**
 ```bash
 cd ../frontend
 pnpm install
-cp .env.example .env.local   # fill in your credentials
+cp .env.example .env.local  # fill in your credentials
 pnpm dev
 ```
 
------
+---
 
 ## ⚙️ Configuration
 
-Both `backend/` and `frontend/` include `.env.example` files. Copy and populate them before running the project.
+Copy `.env.example` → `.env` (backend) and `.env.example` → `.env.local` (frontend).
 
 ```env
 # App
@@ -146,9 +122,8 @@ GROQ_API_KEY=gsk_...
 GROQ_MODEL=llama-3.3-70b-versatile
 GROQ_SEARCH_MODEL=groq/compound-mini
 GROQ_SEARCH_MODEL_LIVE=groq/compound
-# GROQ_SEARCH_COUNTRY=portugal
 
-# Resend (email — not yet activated)
+# Resend
 RESEND_API_KEY=re_...
 FROM_EMAIL=noreply@yourdomain.com
 
@@ -164,12 +139,9 @@ GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback/google
 
 # Frontend
 FRONTEND_URL=http://localhost:3000
-
-# Optional fallback (only if Compound fails)
-# TAVILY_API_KEY=tvly-...
 ```
 
------
+---
 
 ## 📁 Project Structure
 
@@ -178,81 +150,47 @@ AYANAMI-AGENT/
 ├── backend/
 │   ├── src/
 │   │   └── dev_agent/
-│   │       ├── agents/         # Modular AI agents (GitHub, Email, Anime)
-│   │       ├── api/            # FastAPI app and route definitions
-│   │       ├── core/           # Core utilities and shared models
-│   │       ├── database/       # MongoDB connection and schemas
-│   │       ├── orchestrator/   # Agent dispatching and planning logic
-│   │       └── tools/          # External tool integrations
-│   ├── pyproject.toml
-│   └── requirements.txt
+│   │       ├── agents/          # GitHub, Email, Anime, File agents
+│   │       ├── api/             # FastAPI routes and app entrypoint
+│   │       ├── core/            # Config, auth, utilities
+│   │       ├── database/        # MongoDB models and connection
+│   │       ├── orchestrator/    # Agent dispatching and task planning
+│   │       └── tools/           # External integrations (GitHub, Google, Resend)
+│   ├── requirements.txt
+│   └── pyproject.toml
 ├── frontend/
-│   ├── app/                    # Next.js pages
-│   ├── components/             # Reusable React components
-│   ├── public/                 # Static assets (images, cursors)
-│   ├── next.config.mjs
-│   └── package.json
+│   ├── app/                     # Next.js pages
+│   ├── components/              # Reusable React components
+│   └── public/                  # Static assets and cursors
 ├── .env.example
-├── .gitignore
-└── vercel.json
+├── vercel.json
+└── README.md
 ```
 
------
-
-## 🏗️ Architecture Overview
-
-Requests from the frontend hit the FastAPI backend, which passes them to the **Orchestrator**. The Orchestrator analyzes the intent and routes the request to the appropriate agent. Each agent has access to its own set of tools and returns a structured response back through the API.
-
-```
-Frontend (Next.js)
-      │
-      ▼
-FastAPI Backend
-      │
-      ▼
-  Orchestrator  ──── routes to ────►  GitHub Agent  (GitHub API)
-                                  ►  Email Agent   (Google API)
-                                  ►  Anime Agent   (Groq LLM)
-      │
-      ▼
-  MongoDB  (session data, agent state)
-```
-
-All agents share the same Groq LLM connection for reasoning and generation, keeping inference fast and centralized.
-
------
-
-## ⚠️ Known Limitations
-
-- **Account registration is disabled** — Resend email verification has not been activated yet (see warning above).
-- **No multi-tenancy** — the current data model is not designed for large-scale multi-user isolation.
-- **Groq rate limits** — free-tier Groq accounts have request limits that may affect response speed under heavy use.
-- **Email Agent scope** — currently limited to Google accounts authenticated via OAuth; other providers are not supported.
-
------
+---
 
 ## 🧠 What I Learned
 
-- **Modular agent architecture** — designing extensible agent pipelines that can be expanded without breaking existing flows.
-- **Full-stack integration** — connecting a FastAPI backend to a Next.js frontend with clean API boundaries and proper state handling.
-- **LLM orchestration** — using Groq to coordinate fast inference across multiple specialized agents.
-- **External API integration** — building robust connectors for GitHub and Google services to extend agent capabilities.
-- **Thematic design** — building a consistent visual identity across both the UI and the project’s overall structure.
+**Modular Agent Design** — Building agents as independent, composable units that can be orchestrated without tight coupling between them.
 
------
+**File Processing Pipeline** — Handling multipart uploads, decompressing archives server-side, and feeding extracted content into LLM context without hitting token limits.
+
+**OAuth Reliability** — Debugging token refresh flows and callback edge cases across GitHub and Google providers.
+
+**Full-stack LLM Integration** — Managing context windows, streaming responses, and maintaining state across a FastAPI backend and Next.js frontend.
+
+---
 
 ## 🤝 Contributing
 
-Contributions are welcome. If you find a bug or want to propose a feature, open an issue first so we can discuss it before any code is written. When submitting a pull request, keep the scope focused — one fix or feature per PR.
+Issues and pull requests are welcome. Please open an issue first for significant changes.
 
------
+---
 
 ## 📄 License
 
-This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.
+MIT — see [LICENSE](LICENSE) for details.
 
------
+---
 
-<div align="center">
-  Made with 💜 by <a href="https://github.com/EduhxH">EduhxH</a>
-</div>
+<p align="center">Made with 💜 by <a href="https://github.com/EduhxH">EduhxH</a></p>
