@@ -13,6 +13,8 @@
 
 *A modular AI agent system designed to streamline development workflows — combining intelligent automation, LLM orchestration, and a clean full-stack interface.*
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-ayanami--agent.vercel.app-6366f1?style=for-the-badge&logo=vercel&logoColor=white)](https://ayanami-agent.vercel.app)
+
 🇺🇸 This project is documented and implemented entirely in American English.
 
 </div>
@@ -46,6 +48,8 @@
 - [Getting Started](#-getting-started)
 - [Configuration](#️-configuration)
 - [Project Structure](#-project-structure)
+- [Architecture Overview](#️-architecture-overview)
+- [Known Limitations](#️-known-limitations)
 - [What I Learned](#-what-i-learned)
 
 -----
@@ -54,21 +58,21 @@
 
 AYANAMI-AGENT is a modular AI agent system built to assist developers with intelligent, context-aware automation. It represents a significant leap forward from earlier projects — including [AGENTE-IA](https://github.com/EduhxH/AGENTE-IA), [IA-agent-with-tools](https://github.com/EduhxH/IA-agent-with-tools---), and [MCP-SERVER-PRO](https://github.com/EduhxH/MCP-SERVER-PRO) — and marks a natural evolution in architecture, tooling, and scope.
 
-Inspired by Rei Ayanami from *Neon Genesis Evangelion*, the project combines a high-performance FastAPI backend with a Next.js frontend, orchestrating specialized agents for code analysis, email automation, and even anime recommendations based on a developer’s technical profile.
+The system combines a high-performance FastAPI backend with a Next.js frontend, orchestrating specialized agents for code analysis, email automation, and developer productivity — all powered by Groq’s fast LLM inference.
 
 -----
 
 ## ✨ Features
 
-|Agent / Component         |Description                                                                                                                    |
-|--------------------------|-------------------------------------------------------------------------------------------------------------------------------|
-|🐙 **GitHub Agent**        |Analyzes repositories, identifies code quality issues, and suggests targeted improvements.                                     |
-|📧 **Email Agent**         |Automates email interactions and helps organize developer communication workflows.                                             |
-|🌸 **Anime Agent**         |An Easter egg feature that recommends anime based on the user’s technical profile — with cultural and technical justifications.|
-|⚡ **FastAPI Backend**     |High-performance, async-ready API powering all agent orchestration and routing logic.                                          |
-|⚛️ **Next.js Frontend**    |Responsive, minimalist UI built with Next.js and React for a seamless user experience.                                         |
-|🍃 **MongoDB Integration** |Flexible, scalable data storage for agent state, user profiles, and session data.                                              |
-|🧠 **Groq LLM Integration**|Fast language model inference via Groq, used across all agents for reasoning and generation.                                   |
+|Agent / Component         |Description                                                                                        |
+|--------------------------|---------------------------------------------------------------------------------------------------|
+|🐙 **GitHub Agent**        |Analyzes repositories, identifies code quality issues, and suggests targeted improvements.         |
+|📧 **Email Agent**         |Automates email interactions and helps organize developer communication workflows.                 |
+|🌸 **Anime Agent**         |A hidden feature that generates personalized recommendations based on the user’s technical profile.|
+|⚡ **FastAPI Backend**     |High-performance, async-ready API powering all agent orchestration and routing logic.              |
+|⚛️ **Next.js Frontend**    |Responsive, minimalist UI built with Next.js and React for a seamless user experience.             |
+|🍃 **MongoDB Integration** |Flexible, scalable data storage for agent state, user profiles, and session data.                  |
+|🧠 **Groq LLM Integration**|Fast language model inference via Groq, used across all agents for reasoning and generation.       |
 
 -----
 
@@ -195,19 +199,51 @@ AYANAMI-AGENT/
 
 -----
 
+## 🏗️ Architecture Overview
+
+Requests from the frontend hit the FastAPI backend, which passes them to the **Orchestrator**. The Orchestrator analyzes the intent and routes the request to the appropriate agent. Each agent has access to its own set of tools and returns a structured response back through the API.
+
+```
+Frontend (Next.js)
+      │
+      ▼
+FastAPI Backend
+      │
+      ▼
+  Orchestrator  ──── routes to ────►  GitHub Agent  (GitHub API)
+                                  ►  Email Agent   (Google API)
+                                  ►  Anime Agent   (Groq LLM)
+      │
+      ▼
+  MongoDB  (session data, agent state)
+```
+
+All agents share the same Groq LLM connection for reasoning and generation, keeping inference fast and centralized.
+
+-----
+
+## ⚠️ Known Limitations
+
+- **Account registration is disabled** — Resend email verification has not been activated yet (see warning above).
+- **No multi-tenancy** — the current data model is not designed for large-scale multi-user isolation.
+- **Groq rate limits** — free-tier Groq accounts have request limits that may affect response speed under heavy use.
+- **Email Agent scope** — currently limited to Google accounts authenticated via OAuth; other providers are not supported.
+
+-----
+
 ## 🧠 What I Learned
 
 - **Modular agent architecture** — designing extensible agent pipelines that can be expanded without breaking existing flows.
 - **Full-stack integration** — connecting a FastAPI backend to a Next.js frontend with clean API boundaries and proper state handling.
 - **LLM orchestration** — using Groq to coordinate fast inference across multiple specialized agents.
 - **External API integration** — building robust connectors for GitHub and Google services to extend agent capabilities.
-- **Thematic design** — embedding a consistent visual identity (Evangelion / Rei Ayanami aesthetic) across both the UI and the project’s overall narrative.
+- **Thematic design** — building a consistent visual identity across both the UI and the project’s overall structure.
 
 -----
 
 ## 🤝 Contributing
 
-Contributions are welcome. Feel free to open issues or submit pull requests.
+Contributions are welcome. If you find a bug or want to propose a feature, open an issue first so we can discuss it before any code is written. When submitting a pull request, keep the scope focused — one fix or feature per PR.
 
 -----
 
