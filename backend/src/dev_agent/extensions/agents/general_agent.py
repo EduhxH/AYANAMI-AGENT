@@ -159,6 +159,9 @@ class GeneralConversationAgent(BaseAgent):
 
         answer = ""
         used_search = False
+        groq_error = None
+        
+        # Tenta Groq Compound (live search)
         try:
             answer, used_search = await answer_with_live_search(
                 self.client,
@@ -169,14 +172,21 @@ class GeneralConversationAgent(BaseAgent):
                 mini_fallback_model=self.settings.groq_search_model,
             )
         except Exception as exc:
-            if not is_payload_too_large(exc) and not legacy_search_configured():
-                return self.failure(str(exc))
+            groq_error = str(exc)
+            # Se falhou, vai tentar fallback abaixo
 
+        # Se Groq retornou resposta válida (sem erro de payload), retorna
         if answer:
-            return self.success(
-                {"answer": answer, "used_web_search": used_search}
-            )
+            # Só falha se foi erro de payload - tenta fallback
+            if groq_error and is_payload_too_large(Exception(groq_error)):
+                pass  # Tenta fallback abaixo
+            else:
+                # Resposta válida
+                return self.success(
+                    {"answer": answer, "used_web_search": used_search}
+                )
 
+        # Se Groq falhou ou retornou vazio, tenta fallback TAVILY/SERPAPI
         if legacy_search_configured():
             try:
                 hits = await search_web(query, max_results=3)
@@ -186,7 +196,17 @@ class GeneralConversationAgent(BaseAgent):
                         query, language_hint, search_block, used_search=True
                     )
             except Exception as exc:
+                # Se TAVILY também falhou, usa o erro anterior se houver
+                if groq_error:
+                    return self.failure(f"Groq falhou: {groq_error}. Fallback TAVILY também falhou: {str(exc)}")
                 return self.failure(str(exc))
+
+        # Sem TAVILY configurado e Groq falhou
+        if groq_error:
+            return self.failure(
+                f"Groq live search falhou: {groq_error}. "
+                "Tenta uma pergunta mais específica ou configura TAVILY_API_KEY como fallback."
+            )
 
         return self.failure(
             "Não foi possível obter resultados de pesquisa. "

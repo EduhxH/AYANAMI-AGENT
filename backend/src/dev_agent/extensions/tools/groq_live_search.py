@@ -76,10 +76,16 @@ def is_payload_too_large(exc: BaseException) -> bool:
 
 
 def _search_models_to_try(primary: str, *, mini_model: str = COMPOUND_MINI) -> list[str]:
+    """Retorna modelos em ordem de prioridade para tentar."""
     ordered: list[str] = []
-    for m in (primary, mini_model):
-        if m and m not in ordered:
-            ordered.append(m)
+    # Tenta sempre modelo principal primeiro
+    if primary and primary not in ordered:
+        ordered.append(primary)
+    # Depois mini como fallback
+    if mini_model and mini_model not in ordered and mini_model != primary:
+        ordered.append(mini_model)
+    if not ordered:
+        ordered.append(COMPOUND_MINI)  # Fallback para compound-mini se tudo vazio
     return ordered
 
 
@@ -147,7 +153,15 @@ Instructions:
     # Nota: country não é suportado como parâmetro na API Groq Compound
 
     response = await client.chat.completions.create(**kwargs)
+    
+    # Validar resposta
+    if not response.choices or len(response.choices) == 0:
+        raise ValueError("API Groq retornou resposta vazia (sem choices)")
+    
     msg = response.choices[0].message
+    if not msg:
+        raise ValueError("API Groq retornou message nula")
+    
     answer = (msg.content or "").strip()
     used_search = bool(getattr(msg, 'executed_tools', False))
     return answer, used_search

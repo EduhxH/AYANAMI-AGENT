@@ -14,6 +14,7 @@ def legacy_search_configured() -> bool:
 
 def search_configured() -> bool:
     """True se Groq API key existe (Compound) ou fallback Tavily/SerpAPI."""
+    # Nota: Groq api_key é verificado via settings/config, não aqui
     return legacy_search_configured()
 
 
