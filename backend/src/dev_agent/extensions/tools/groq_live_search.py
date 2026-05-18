@@ -144,11 +144,10 @@ Instructions:
         "messages": messages,
         "temperature": 0.35,
     }
-    if country:
-        kwargs["search_settings"] = {"country": country}
+    # Nota: country não é suportado como parâmetro na API Groq Compound
 
     response = await client.chat.completions.create(**kwargs)
     msg = response.choices[0].message
     answer = (msg.content or "").strip()
-    used_search = bool(msg.executed_tools)
+    used_search = bool(getattr(msg, 'executed_tools', False))
     return answer, used_search
