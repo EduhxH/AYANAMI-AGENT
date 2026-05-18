@@ -6,6 +6,7 @@ import { ArrowUp, GitBranch, Mail, Plus, Search } from "lucide-react";
 import { motion } from "framer-motion";
 
 import { BrandLogo } from "@/components/dashboard/BrandLogo";
+import { AgentMessage } from "@/components/dashboard/AgentMessage";
 import { useChat } from "@/context/ChatContext";
 import { useDashboardUI } from "@/context/DashboardUIContext";
 import { getAuthErrorMessage } from "@/context/AuthContext";
@@ -214,7 +215,11 @@ export function DashboardChat() {
                           : "rounded-bl-md border border-theme bg-[var(--bubble-assistant)] text-primary"
                       )}
                     >
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      {isUser ? (
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      ) : (
+                        <AgentMessage message={msg.content} />
+                      )}
                       <p
                         className={cn(
                           "mt-1 text-[10px]",
