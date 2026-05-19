@@ -1,3 +1,5 @@
+import json
+
 from groq import AsyncGroq
 from typing import Optional, List, Callable, Awaitable
 
@@ -42,11 +44,12 @@ class Orchestrator:
         lines = []
         for r in results:
             if r.success:
-                lines.append(f"Agente {r.agent}: Sucesso — {r.data}")
+                agent_text = self._format_agent_success(r)
+                lines.append(agent_text)
             else:
                 lines.append(f"Agente {r.agent}: Erro — {r.error or r.data}")
 
-        results_text = "\n".join(lines)
+        results_text = "\n\n".join(lines)
 
         response = await self.client.chat.completions.create(
             model=self.settings.groq_model,
@@ -59,9 +62,8 @@ Pedido do utilizador: "{query}"
 Resultados dos agentes:
 {results_text}
 
-Cria uma resposta clara e útil para o utilizador com base nestes resultados.
-Escreve em português, de forma directa e técnica.
-Se houve erros, explica o que o utilizador deve fazer (ex: religar conta, activar API).
+Baseia a resposta final nestes resultados, especialmente no contexto do repositório fornecido.
+Escreve em português, de forma directa, técnica e sem especulações.
 """,
                 }
             ],
@@ -69,3 +71,9 @@ Se houve erros, explica o que o utilizador deve fazer (ex: religar conta, activa
         )
 
         return response.choices[0].message.content
+
+    def _format_agent_success(self, result: AgentResult) -> str:
+        data = result.data or {}
+        if data.get("repo_context_text"):
+            return f"Agente {result.agent}: Sucesso — Contexto do repositório:\n{data['repo_context_text']}"
+        return f"Agente {result.agent}: Sucesso — {json.dumps(data, ensure_ascii=False, indent=2)}"

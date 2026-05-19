@@ -101,6 +101,7 @@ class GitHubAgent(BaseAgent):
             analysis = await analyser.analyse(files, query)
 
             print(f"[GITHUB_AGENT] Análise completada com sucesso")
+            context_text = self._serialize_repo_context(repo_context)
             return self.success(
                 {
                     "repo": repo_name,
@@ -109,6 +110,7 @@ class GitHubAgent(BaseAgent):
                     "suggestions": analysis.get("suggestions", []),
                     "quality_score": analysis.get("quality_score"),
                     "repo_context": repo_context,
+                    "repo_context_text": context_text,
                 }
             )
         except ValueError as e:
@@ -235,13 +237,39 @@ class GitHubAgent(BaseAgent):
         except Exception as exc:
             print(f"[GITHUB_AGENT] Falha ao construir contexto de repositório: {exc}")
 
-        return {
+        result = {
             "summary": summary,
             "readme": readme,
             "file_tree": file_tree,
             "config_files": config_files,
             "main_entry_files": main_entry_files,
         }
+        result["repo_context_text"] = self._serialize_repo_context(result)
+        return result
+
+    def _serialize_repo_context(self, context: dict) -> str:
+        sections = []
+        summary = context.get("summary") or {}
+        if summary:
+            sections.append("REPOSITÓRIO:\n" + "\n".join(
+                f"{k}: {v}" for k, v in summary.items() if v is not None
+            ))
+
+        if context.get("readme"):
+            sections.append("README:\n" + context["readme"].strip())
+
+        if context.get("file_tree"):
+            sections.append("Árvore de arquivos na raíz:\n" + "\n".join(context["file_tree"]))
+
+        if context.get("config_files"):
+            config_lines = [f"{item['path']}:\n{item['content'].strip()}" for item in context["config_files"]]
+            sections.append("Arquivos de configuração detectados:\n" + "\n---\n".join(config_lines))
+
+        if context.get("main_entry_files"):
+            main_lines = [f"{item['path']}:\n{item['content'].strip()}" for item in context["main_entry_files"]]
+            sections.append("Arquivos de entrada principais:\n" + "\n---\n".join(main_lines))
+
+        return "\n\n".join(sections).strip()
 
     def _is_create_repo_request(self, query: str) -> bool:
         q = query.lower()
