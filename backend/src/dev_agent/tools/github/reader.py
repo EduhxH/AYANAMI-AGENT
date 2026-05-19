@@ -68,19 +68,11 @@ class GitHubReader:
             if await self.repo_exists(candidate):
                 return candidate
 
-        # Fallback: use GitHub search API to find public repositories by name
-        async with httpx.AsyncClient() as client:
-            q = f"{name_hint} in:name"
-            response = await client.get(
-                f"{self.BASE_URL}/search/repositories",
-                headers=self.headers,
-                params={"q": q, "per_page": 5, "sort": "stars", "order": "desc"},
-            )
-            if response.status_code == 200:
-                items = response.json().get("items", [])
-                if items:
-                    return items[0]["full_name"]
-
+        # Do NOT fallback to public GitHub search. Only consider repos
+        # accessible to the authenticated user or the explicit username
+        # candidate. This prevents returning third-party repositories
+        # when the user requested a repo that doesn't exist in their
+        # context.
         return None
 
     async def get_repo_summary(self, repo: str) -> Dict:

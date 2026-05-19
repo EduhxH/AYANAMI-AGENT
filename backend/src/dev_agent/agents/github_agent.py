@@ -73,6 +73,8 @@ class GitHubAgent(BaseAgent):
     def _extract_repo_name_hint(self, query: str) -> str | None:
         patterns = [
             r"reposit[oó]rio\s+([a-zA-Z0-9_.-]+)",
+            r"chamad[oó](?:\s+de)?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            r"chamado\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
             r"repo\s+([a-zA-Z0-9_.-]+)",
             r"projecto\s+([a-zA-Z0-9_.-]+)",
             r"projeto\s+([a-zA-Z0-9_.-]+)",
