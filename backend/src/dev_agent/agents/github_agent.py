@@ -111,6 +111,7 @@ class GitHubAgent(BaseAgent):
         )
 
     async def _create_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
+        print(f"===> ENTRANDO NA CRIAÇÃO DE REPO (github_agent): query={query!r}")
         name = self._extract_repo_name_hint(query)
         if not name:
             return self.failure("Nome do repositório não identificado.")

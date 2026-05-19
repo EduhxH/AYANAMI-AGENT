@@ -22,6 +22,7 @@ class GitHubWriter:
         owner: Optional[str] = None,
         auto_init: bool = True,
     ) -> dict:
+        print(f"===> ENTRANDO NA CRIAÇÃO DE REPO (writer): name={name!r}, owner={owner!r}, private={private}")
         # Sanitize: strip whitespace and remove characters invalid for GitHub repo names
         name = re.sub(r"[^a-zA-Z0-9_.-]", "-", name.strip()).strip("-")
         if not name:
