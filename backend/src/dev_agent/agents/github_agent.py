@@ -137,6 +137,11 @@ class GitHubAgent(BaseAgent):
             print(f"[GITHUB_AGENT] Nome owner/repo detectado, retornando repo '{owner}/{repo_name}'")
             return f"{owner}/{repo_name}"
 
+        known_repo = await self._find_known_repo_in_query(query, reader)
+        if known_repo:
+            print(f"[GITHUB_AGENT] Repositório conhecido detectado na query: {known_repo}")
+            return known_repo
+
         hint = self._extract_repo_name_hint(query)
         if not hint:
             return None
@@ -146,6 +151,38 @@ class GitHubAgent(BaseAgent):
             username = await reader.get_authenticated_login()
 
         return await reader.find_repo_by_name(hint, username)
+
+    async def _find_known_repo_in_query(self, query: str, reader: GitHubReader) -> str | None:
+        try:
+            repos = await reader.list_accessible_repos()
+        except Exception as exc:
+            print(f"[GITHUB_AGENT] Falha ao buscar repositórios acessíveis para correspondência de query: {exc}")
+            return None
+
+        if not repos:
+            return None
+
+        candidates = []
+        for repo in repos:
+            name = repo.get("name", "")
+            full_name = repo.get("full_name", "")
+            if self._query_contains_repo_name(query, full_name):
+                candidates.append((full_name, len(full_name)))
+            elif self._query_contains_repo_name(query, name):
+                target = full_name or name
+                candidates.append((target, len(name)))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return candidates[0][0]
+
+    def _query_contains_repo_name(self, query: str, repo_name: str) -> bool:
+        if not repo_name:
+            return False
+        pattern = rf"(?<![A-Za-z0-9_.-]){re.escape(repo_name)}(?![A-Za-z0-9_.-])"
+        return bool(re.search(pattern, query, re.IGNORECASE))
 
     async def _build_repo_context(self, repo: str, reader: GitHubReader) -> dict:
         summary = {}
