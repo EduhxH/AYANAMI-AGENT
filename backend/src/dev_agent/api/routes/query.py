@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -25,24 +25,32 @@ async def handle_query(
 ):
     users_repo = UsersRepository(db)
 
+    # Buscar usuário atualizado do banco de dados para garantir tokens recentes
+    user = await users_repo.find_by_id(current_user.id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Utilizador não encontrado na sessão",
+        )
+
     async def refresh_google() -> str:
-        user = await users_repo.find_by_id(current_user.id)
-        if not user:
+        refreshed_user = await users_repo.find_by_id(user.id)
+        if not refreshed_user:
             return ""
-        refreshed = await ensure_fresh_google_token(user, users_repo)
-        return refreshed or user.google_token or ""
+        refreshed = await ensure_fresh_google_token(refreshed_user, users_repo)
+        return refreshed or refreshed_user.google_token or ""
 
     user_data = {
-        "user_id": current_user.id,
-        "github_token": current_user.github_token,
-        "github_username": current_user.github_username,
-        "google_token": current_user.google_token,
+        "user_id": user.id,
+        "github_token": user.github_token,
+        "github_username": user.github_username,
+        "google_token": user.google_token,
     }
 
     orchestrator = Orchestrator(on_google_token_refresh=refresh_google)
     task = TaskRequest(
         query=body.query,
-        user_id=current_user.id,
+        user_id=user.id,
         agents=body.agents,
     )
 

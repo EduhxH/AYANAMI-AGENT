@@ -25,26 +25,23 @@ class GitHubAgent(BaseAgent):
     async def run(self, query: str) -> AgentResult:
         settings = get_settings()
 
-        if self.token:
-            reader = GitHubReader(self.token)
-            writer = GitHubWriter(self.token, github_username=self.github_username)
-        else:
-            reader = LocalRepoReader(settings.local_repo_root if hasattr(settings, 'local_repo_root') else None)
-            writer = None
-
         try:
+            # Validação explícita do token do GitHub ao iniciar
+            if self._is_delete_repo_request(query) or self._is_create_repo_request(query):
+                if not self.token or (isinstance(self.token, str) and self.token.strip() == ""):
+                    raise ValueError("Token do GitHub não encontrado para a sessão atual.")
+
+            if self.token:
+                reader = GitHubReader(self.token)
+                writer = GitHubWriter(self.token, github_username=self.github_username)
+            else:
+                reader = LocalRepoReader(settings.local_repo_root if hasattr(settings, 'local_repo_root') else None)
+                writer = None
+
             if self._is_delete_repo_request(query):
-                if not self.token:
-                    return self.failure(
-                        "Os dados da sua conta vinculada não foram fornecidos no contexto desta sessão."
-                    )
                 return await self._delete_repository(query, writer)
 
             if self._is_create_repo_request(query):
-                if not self.token:
-                    return self.failure(
-                        "Os dados da sua conta vinculada não foram fornecidos no contexto desta sessão."
-                    )
                 return await self._create_repository(query, writer)
 
             analyser = GitHubAnalyser()
