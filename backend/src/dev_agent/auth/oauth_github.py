@@ -30,7 +30,7 @@ The user goes to GitHub and authorizes the app.
         params = {
             "client_id": self.settings.github_client_id,
             "redirect_uri": redirect_uri,
-            "scope": "repo user:email",
+            "scope": "repo user:email delete_repo",
         }
         if state:
             params["state"] = state
