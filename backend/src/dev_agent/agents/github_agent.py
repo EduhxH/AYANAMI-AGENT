@@ -3,6 +3,7 @@ import re
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.models import AgentType, AgentResult
 from dev_agent.tools.github.reader import GitHubReader, LocalRepoReader
+from dev_agent.tools.github.writer import GitHubWriter
 from dev_agent.core.config import get_settings
 from dev_agent.tools.github.analyser import GitHubAnalyser
 
@@ -24,20 +25,27 @@ class GitHubAgent(BaseAgent):
     async def run(self, query: str) -> AgentResult:
         settings = get_settings()
 
-        # If token is available, use remote GitHub API; otherwise try local repo reader
         if self.token:
             reader = GitHubReader(self.token)
+            writer = GitHubWriter(self.token, github_username=self.github_username)
         else:
             reader = LocalRepoReader(settings.local_repo_root if hasattr(settings, 'local_repo_root') else None)
+            writer = None
 
         try:
+            if self._is_create_repo_request(query):
+                if not self.token:
+                    return self.failure(
+                        "Os dados da sua conta vinculada não foram fornecidos no contexto desta sessão."
+                    )
+                return await self._create_repository(query, writer)
+
             analyser = GitHubAnalyser()
 
             repo_name = await self._resolve_repo(query, reader)
             if not repo_name:
                 return self.failure(
-                    "Não consegui identificar o repositório. "
-                    "Diz o nome (ex: fullstack) ou o caminho completo (ex: utilizador/fullstack)."
+                    "Não consegui identificar o repositório."
                 )
 
             files = await reader.get_repo_files(repo_name)
@@ -74,6 +82,55 @@ class GitHubAgent(BaseAgent):
             username = await reader.get_authenticated_login()
 
         return await reader.find_repo_by_name(hint, username)
+
+    def _is_create_repo_request(self, query: str) -> bool:
+        q = query.lower()
+        return any(
+            phrase in q
+            for phrase in (
+                "crie", "criar", "novo repositório", "novo repo", "create repo", "create repository"
+            )
+        )
+
+    async def _create_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
+        name = self._extract_repo_name_hint(query)
+        if not name:
+            return self.failure("Nome do repositório não identificado.")
+
+        visibility = self._resolve_repository_visibility(query)
+        owner = self.github_username
+
+        try:
+            result = await writer.create_repo(
+                name=name,
+                private=visibility == "private",
+                owner=owner,
+            )
+            return self.success(
+                {
+                    "repo": result.get("full_name"),
+                    "private": result.get("private"),
+                    "html_url": result.get("html_url"),
+                }
+            )
+        except Exception as exc:
+            return self.failure(str(exc))
+
+    def _resolve_repository_visibility(self, query: str) -> str:
+        q = query.lower()
+        private_indicators = (
+            "não deixe público",
+            "nao deixe publico",
+            "privado",
+            "private",
+            "não público",
+            "nao publico",
+            "não publíco",
+        )
+        for phrase in private_indicators:
+            if phrase in q:
+                return "private"
+        return "public"
 
     def _extract_repo_name_hint(self, query: str) -> str | None:
         patterns = [
