@@ -1,5 +1,5 @@
 """
-EmailAgent — refactored & calibrated.
+EmailAgent — refactored & calibrated with backward compatibility hooks.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ class EmailIntent(BaseModel):
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
-        # Sanitização simples por regex nativa para evitar dependências externas estritas
         if not re.fullmatch(r"[\w.+-]+@[\w-]+\.\w+", v):
             raise ValueError(f"Email inválido: {v}")
         return v
@@ -270,6 +269,14 @@ class EmailAgent(BaseAgent):
         )
         return resp.choices[0].message.content or "Análise concluída."
 
+    async def _pick_highlight(self, query: str, emails: list[dict]) -> str:
+        """
+        MÉTODO DE COMPATIBILIDADE (HOOKS):
+        O ficheiro preferences/hooks.py mapeia explicitamente este atributo
+        durante o bootstrap da aplicação. Redireciona para o _summarise_relevant.
+        """
+        return await self._summarise_relevant(query, emails)
+
     async def _generate_draft(self, query: str, context_email: dict) -> str:
         prompt = (
             f"EMAIL RECEBIDO\n"
@@ -277,7 +284,7 @@ class EmailAgent(BaseAgent):
             f"Assunto: {context_email.get('subject', 'Sem assunto')}\n"
             f"Conteúdo: {context_email.get('snippet', '')}\n\n"
             f"PEDIDO: {query}\n\n"
-            "Gera uma proposta de resposta professional e concisa em português. "
+            "Gera uma proposta de resposta profissional e concisa em português. "
             "Devolve apenas o texto da resposta, sem explicações."
         )
         resp = await self.client.chat.completions.create(
