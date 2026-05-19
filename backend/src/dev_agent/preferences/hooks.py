@@ -32,7 +32,18 @@ def install_orchestrator_hooks() -> None:
             user_data["user_id"],
             default_display_name=default_name,
         )
-        preamble = build_agent_system_preamble(prefs)
+
+        github_username = user_data.get("github_username")
+        github_connected = bool(user_data.get("github_token"))
+        google_connected = bool(user_data.get("google_token"))
+
+        account_context = (
+            f"GitHub connected: {github_connected}. "
+            f"GitHub username: {github_username or 'not provided'}. "
+            f"Google connected: {google_connected}."
+        )
+
+        preamble = build_agent_system_preamble(prefs, account_context=account_context)
         set_preamble(preamble)
         self._ayanami_system_preamble = preamble
         return await _original_handle(self, request, user_data)
