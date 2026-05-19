@@ -114,12 +114,20 @@ class GitHubAgent(BaseAgent):
 
     def _is_create_repo_request(self, query: str) -> bool:
         q = query.lower()
-        return any(
-            phrase in q
-            for phrase in (
-                "crie", "criar", "novo repositório", "novo repo", "create repo", "create repository"
-            )
-        )
+        # Match common verbs and phrases that indicate repo creation (Portuguese & English)
+        if re.search(r"\b(cria|criar|crie|create|novo|nova)\b", q):
+            # If mentions 'novo' ensure it's followed by repo/repositório soon after
+            if "novo" in q or "nova" in q:
+                if re.search(r"\b(novo|nova)\b.*\b(repo|reposit[oó]rio)\b", q):
+                    return True
+            # Direct verbs or explicit 'repo' mentions
+            if re.search(r"\b(cria|criar|crie|create)\b.*\b(repo|reposit[oó]rio)\b", q):
+                return True
+            # simple forms like 'cria um repo', 'create repo'
+            if re.search(r"\b(cria|criar|crie|create)\b", q) and ("repo" in q or "reposit" in q):
+                return True
+        # also check for explicit phrases
+        return any(phrase in q for phrase in ("novo repositório", "novo repo", "create repo", "create repository"))
 
     def _is_delete_repo_request(self, query: str) -> bool:
         q = query.lower()
@@ -202,27 +210,29 @@ class GitHubAgent(BaseAgent):
         return "public"
 
     def _extract_repo_name_hint(self, query: str) -> str | None:
+        # Try several patterns that commonly indicate a repo name after create/novo/chamado
         patterns = [
-            r"reposit[oó]rio\s+([a-zA-Z0-9_.-]+)",
+            r"(?:cria|criar|crie|create)\s+(?:um\s+)?(?:reposit[oó]rio|repo)\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            r"(?:cria|criar|crie|create)\s+[\"']([a-zA-Z0-9_.-]+)[\"']",
+            r"reposit[oó]rio\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
             r"chamad[oó](?:\s+de)?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
             r"chamado\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            r"repo\s+([a-zA-Z0-9_.-]+)",
-            r"projecto\s+([a-zA-Z0-9_.-]+)",
-            r"projeto\s+([a-zA-Z0-9_.-]+)",
+            r"repo\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            r"projecto\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            r"projeto\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
         ]
+
         for pattern in patterns:
             match = re.search(pattern, query, re.IGNORECASE)
             if match:
-                name = match.group(1).lower()
-                if name not in _STOP_WORDS:
-                    return match.group(1)
+                name = match.group(1)
+                if name and name.lower() not in _STOP_WORDS:
+                    return name
 
+        # Fallback: pick the first token that looks like a repo name
         words = re.findall(r"[a-zA-Z0-9_.-]+", query)
         candidates = [w for w in words if w.lower() not in _STOP_WORDS and len(w) >= 3]
         if candidates:
-            # Use the FIRST valid candidate, not the last.
-            # Using candidates[-1] caused trailing instruction words (e.g. 'funcionou')
-            # to be misidentified as the repository name.
             return candidates[0]
 
         return None
