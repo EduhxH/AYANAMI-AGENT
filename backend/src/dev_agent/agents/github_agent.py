@@ -65,9 +65,28 @@ class GitHubAgent(BaseAgent):
             print(f"[GITHUB_AGENT] Resolvendo nome do repositório...")
             repo_name = await self._resolve_repo(query, reader)
             if not repo_name:
-                print(f"[GITHUB_AGENT] Falha ao resolver nome do repositório")
-                return self.failure(
-                    "Não consegui identificar o repositório."
+                print(f"[GITHUB_AGENT] Nenhuma referência específica de repositório detectada; executando operação global")
+                try:
+                    accessible_repos = await reader.list_accessible_repos()
+                except Exception as exc:
+                    print(f"[GITHUB_AGENT] Erro ao listar repositórios acessíveis: {exc}")
+                    return self.failure(f"Não foi possível listar repositórios acessíveis: {exc}")
+
+                if not accessible_repos:
+                    print(f"[GITHUB_AGENT] Nenhum repositório acessível encontrado")
+                    return self.failure(
+                        "Nenhum repositório acessível encontrado para operação global."
+                    )
+
+                repo_list = [repo.get("full_name", repo.get("name")) for repo in accessible_repos]
+                print(f"[GITHUB_AGENT] Operação global aplicada: {len(repo_list)} repositórios encontrados")
+                return self.success(
+                    {
+                        "global_operation": True,
+                        "repo_count": len(repo_list),
+                        "repositories": repo_list,
+                        "message": "Nenhuma referência específica a um repositório foi detectada; mostrando repositórios acessíveis.",
+                    }
                 )
 
             print(f"[GITHUB_AGENT] Repositório identificado: {repo_name}")
@@ -98,9 +117,21 @@ class GitHubAgent(BaseAgent):
             return self.failure(f"[UNEXPECTED ERROR] {type(e).__name__}: {e}")
 
     async def _resolve_repo(self, query: str, reader: GitHubReader) -> str | None:
-        explicit = re.search(r"([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)", query)
-        if explicit:
-            return explicit.group(0)
+        explicit_url = re.search(
+            r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:[/?\s]|$)",
+            query,
+            re.IGNORECASE,
+        )
+        if explicit_url:
+            repo_name = explicit_url.group(2)
+            print(f"[GITHUB_AGENT] URL GitHub detectada, retornando repo '{repo_name}'")
+            return repo_name
+
+        explicit_owner_repo = re.search(r"\b([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)\b", query)
+        if explicit_owner_repo:
+            repo_name = explicit_owner_repo.group(2)
+            print(f"[GITHUB_AGENT] Nome owner/repo detectado, retornando repo '{repo_name}'")
+            return repo_name
 
         hint = self._extract_repo_name_hint(query)
         if not hint:
