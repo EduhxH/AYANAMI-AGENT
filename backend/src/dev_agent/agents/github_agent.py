@@ -72,8 +72,10 @@ class GitHubAgent(BaseAgent):
                     "quality_score": analysis.get("quality_score"),
                 }
             )
+        except ValueError as e:
+            return self.failure(f"[RAW ERROR] {e}")
         except Exception as e:
-            return self.failure(str(e))
+            return self.failure(f"[UNEXPECTED ERROR] {type(e).__name__}: {e}")
 
     async def _resolve_repo(self, query: str, reader: GitHubReader) -> str | None:
         explicit = re.search(r"([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)", query)
@@ -116,11 +118,15 @@ class GitHubAgent(BaseAgent):
         visibility = self._resolve_repository_visibility(query)
         owner = self.github_username
 
+        # Extract optional description hint from the query (e.g. 'no readme coloque X')
+        description = self._extract_description_hint(query)
+
         try:
             result = await writer.create_repo(
                 name=name,
                 private=visibility == "private",
                 owner=owner,
+                description=description,
             )
             return self.success(
                 {
@@ -129,8 +135,11 @@ class GitHubAgent(BaseAgent):
                     "html_url": result.get("html_url"),
                 }
             )
+        except ValueError as exc:
+            # Re-raise raw API error — do NOT let the LLM rephrase or hallucinate
+            return self.failure(f"[RAW ERROR] {exc}")
         except Exception as exc:
-            return self.failure(str(exc))
+            return self.failure(f"[UNEXPECTED ERROR] {type(exc).__name__}: {exc}")
 
     async def _delete_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
         name = self._extract_repo_name_hint(query)
@@ -179,6 +188,29 @@ class GitHubAgent(BaseAgent):
         words = re.findall(r"[a-zA-Z0-9_.-]+", query)
         candidates = [w for w in words if w.lower() not in _STOP_WORDS and len(w) >= 3]
         if candidates:
-            return candidates[-1]
+            # Use the FIRST valid candidate, not the last.
+            # Using candidates[-1] caused trailing instruction words (e.g. 'funcionou')
+            # to be misidentified as the repository name.
+            return candidates[0]
 
+        return None
+
+    def _extract_description_hint(self, query: str) -> str | None:
+        """
+        Extract an optional description from natural-language instructions such as:
+          'no readme coloque funcionou'
+          'com descrição meu projeto'
+          'description: hello world'
+        The extracted text is used as the GitHub repo description field, never as the name.
+        """
+        patterns = [
+            r"no\s+readme\s+(?:coloque|escreva|ponha)\s+(.+)",
+            r"com\s+descri[çc][aã]o\s+(.+)",
+            r"descri[çc][aã]o[:\s]+(.+)",
+            r"description[:\s]+(.+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
         return None
