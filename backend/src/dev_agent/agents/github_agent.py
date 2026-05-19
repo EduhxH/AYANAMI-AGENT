@@ -2,7 +2,8 @@ import re
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.models import AgentType, AgentResult
-from dev_agent.tools.github.reader import GitHubReader
+from dev_agent.tools.github.reader import GitHubReader, LocalRepoReader
+from dev_agent.core.config import get_settings
 from dev_agent.tools.github.analyser import GitHubAnalyser
 
 _STOP_WORDS = {
@@ -21,11 +22,15 @@ class GitHubAgent(BaseAgent):
         self.github_username = github_username
 
     async def run(self, query: str) -> AgentResult:
-        if not self.token:
-            return self.failure("GitHub não está ligado. Liga a tua conta primeiro.")
+        settings = get_settings()
+
+        # If token is available, use remote GitHub API; otherwise try local repo reader
+        if self.token:
+            reader = GitHubReader(self.token)
+        else:
+            reader = LocalRepoReader(settings.local_repo_root if hasattr(settings, 'local_repo_root') else None)
 
         try:
-            reader = GitHubReader(self.token)
             analyser = GitHubAnalyser()
 
             repo_name = await self._resolve_repo(query, reader)
@@ -65,7 +70,7 @@ class GitHubAgent(BaseAgent):
             return None
 
         username = self.github_username
-        if not username:
+        if not username and hasattr(reader, "get_authenticated_login"):
             username = await reader.get_authenticated_login()
 
         return await reader.find_repo_by_name(hint, username)

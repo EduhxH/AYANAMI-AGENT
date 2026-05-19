@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     groq_search_model: str = "groq/compound-mini"
     groq_search_model_live: str = "groq/compound"
     groq_search_country: str | None = None
+    local_repo_root: str | None = None
     
     resend_api_key: str
     from_email: str

@@ -3,6 +3,8 @@ from typing import List, Dict, Optional
 import io
 import zipfile
 import base64
+import os
+from typing import Iterable
 
 
 class GitHubReader:
@@ -209,3 +211,85 @@ class GitHubReader:
                         pass
 
             return files[:8]
+
+
+class LocalRepoReader:
+    """Leitor simples que lê um repositório localizado no disco.
+
+    Usa um diretório root (p.ex. definido por `LOCAL_REPO_ROOT` ou cwd)
+    e procura por diretórios correspondentes ao nome do repositório.
+    """
+
+    def __init__(self, root: Optional[str] = None):
+        self.root = root or os.getcwd()
+
+    def _repo_dir_candidates(self, name_hint: str) -> Iterable[str]:
+        # procura por pastas cujo nome contenha o hint
+        try:
+            for entry in os.listdir(self.root):
+                full = os.path.join(self.root, entry)
+                if os.path.isdir(full) and name_hint.lower() in entry.lower():
+                    yield full
+        except Exception:
+            return
+
+    def repo_exists(self, repo: str) -> bool:
+        # repo pode ser 'owner/name' ou 'name'
+        name = repo.split("/")[-1]
+        path = os.path.join(self.root, name)
+        return os.path.isdir(path)
+
+    async def list_accessible_repos(self, max_repos: int = 100) -> List[Dict]:
+        repos = []
+        try:
+            for entry in os.listdir(self.root)[:max_repos]:
+                full = os.path.join(self.root, entry)
+                if os.path.isdir(full):
+                    repos.append({"name": entry, "full_name": entry, "path": full})
+        except Exception:
+            pass
+        return repos
+
+    async def find_repo_by_name(self, name_hint: str, username: Optional[str] = None) -> Optional[str]:
+        hint = name_hint.lower().strip()
+        # Exact match
+        exact_path = os.path.join(self.root, hint)
+        if os.path.isdir(exact_path):
+            return hint
+
+        # try candidates
+        for full in self._repo_dir_candidates(hint):
+            return os.path.basename(full)
+
+        # if username provided, try username/name under root
+        if username:
+            cand = os.path.join(self.root, name_hint)
+            if os.path.isdir(cand):
+                return name_hint
+
+        return None
+
+    async def get_repo_files(self, repo: str, path: str = "") -> List[Dict]:
+        name = repo.split("/")[-1]
+        root = os.path.join(self.root, name)
+        files = []
+        exts = (".py", ".js", ".ts", ".tsx", ".go", ".java", ".md", ".txt", ".json", ".yaml", ".yml")
+        if not os.path.isdir(root):
+            raise ValueError(f"Repositório local não encontrado: {repo}")
+
+        for dirpath, _, filenames in os.walk(root):
+            for fn in filenames:
+                if fn.lower().endswith(exts):
+                    try:
+                        fp = os.path.join(dirpath, fn)
+                        with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read(3000)
+                        rel = os.path.relpath(fp, root)
+                        files.append({"name": fn, "path": rel, "content": text})
+                    except Exception:
+                        continue
+                if len(files) >= 20:
+                    break
+            if len(files) >= 20:
+                break
+        return files[:8]
