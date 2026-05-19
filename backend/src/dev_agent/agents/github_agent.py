@@ -195,28 +195,35 @@ class GitHubAgent(BaseAgent):
 
     def _resolve_repository_visibility(self, query: str) -> str:
         q = query.lower()
-        private_indicators = (
-            "não deixe público",
-            "nao deixe publico",
-            "privado",
-            "private",
-            "não público",
-            "nao publico",
-            "não publíco",
-        )
-        for phrase in private_indicators:
+        # Robust detection for private intent. Match explicit words or negation patterns
+        if "privado" in q or "private" in q:
+            return "private"
+
+        # Patterns like: "não deixe público", "nao deixe ele publico", "não deixe-o público"
+        if re.search(r"\b(n[ãa]o|nao)\b.*\bdeix(?:e|ar|ando)\b.*\bpublic", q):
+            return "private"
+
+        # Direct negative phrases
+        for phrase in ("não deixe público", "nao deixe publico", "não público", "nao publico", "não publíco"):
             if phrase in q:
                 return "private"
         return "public"
 
     def _extract_repo_name_hint(self, query: str) -> str | None:
         # Try several patterns that commonly indicate a repo name after create/novo/chamado
+        # Patterns ordered to prefer explicit connectors (chamado/nome/denominado) and
+        # to avoid capturing connector words themselves as the repo name.
+        connector = r"(?:chamad[oó]|chamada|chamado|denominado|nome|como)"
         patterns = [
-            r"(?:cria|criar|crie|create)\s+(?:um\s+)?(?:reposit[oó]rio|repo)\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            # cria um repo chamado <name>
+            rf"(?:cria|criar|crie|create)\s+(?:um\s+)?(?:reposit[oó]rio|repo)(?:\s+{connector})?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            # cria '<name>'
             r"(?:cria|criar|crie|create)\s+[\"']([a-zA-Z0-9_.-]+)[\"']",
-            r"reposit[oó]rio\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            r"chamad[oó](?:\s+de)?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            r"chamado\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            # repositório chamado <name>
+            rf"reposit[oó]rio(?:\s+{connector})?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            # chamado <name> / chamad[oó]o de <name>
+            rf"{connector}(?:\s+de)?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
+            # repo <name>
             r"repo\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
             r"projecto\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
             r"projeto\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
