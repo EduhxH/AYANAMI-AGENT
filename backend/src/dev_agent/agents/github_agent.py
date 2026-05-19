@@ -198,13 +198,17 @@ class GitHubAgent(BaseAgent):
         # Robust detection for private intent. Match explicit words or negation patterns
         if "privado" in q or "private" in q:
             return "private"
-
         # Patterns like: "não deixe público", "nao deixe ele publico", "não deixe-o público"
         if re.search(r"\b(n[ãa]o|nao)\b.*\bdeix(?:e|ar|ando)\b.*\bpublic", q):
             return "private"
 
+        # Shorthand 'n' used as 'não' or variations like 'n deixe publico', 'n publico'
+        # We want to detect isolated ' n ' or ' n ' before 'publico'
+        if re.search(r"\b[nN]\b\s*(?:deixe|deix|deix-e|deix-o|nao)?\b.*\bpublic", query):
+            return "private"
+
         # Direct negative phrases
-        for phrase in ("não deixe público", "nao deixe publico", "não público", "nao publico", "não publíco"):
+        for phrase in ("não deixe público", "nao deixe publico", "não público", "nao publico", "não publíco", "n deixe publico", "n publico", "n deixe ele publico", "sem ser publico"):
             if phrase in q:
                 return "private"
         return "public"
