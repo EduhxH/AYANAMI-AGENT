@@ -170,7 +170,13 @@ class EmailAgent(BaseAgent):
             return self.failure(f"Erro ao enviar email: {exc}")
 
     async def _handle_draft(self, query: str, intent: EmailIntent) -> AgentResult:
-        if intent.body and len(intent.body.strip()) > 30 and "prop" not in intent.body.lower():
+        # Só ignoramos a leitura da Inbox se o utilizador forneceu um corpo de email explícito e extenso para rascunho
+        # Se contiver comandos de geração de proposta, forçamos a busca do contexto da Inbox.
+        q_low = query.lower()
+        has_explicit_body = intent.body and len(intent.body.strip()) > 40
+        is_requesting_generation = "ger" in q_low or "prop" in q_low or "resp" in q_low or "escrev" in q_low
+
+        if has_explicit_body and not is_requesting_generation:
             return self.success({
                 "action": "draft",
                 "proposed_response": intent.body.strip(),
@@ -270,11 +276,6 @@ class EmailAgent(BaseAgent):
         return resp.choices[0].message.content or "Análise concluída."
 
     async def _pick_highlight(self, query: str, emails: list[dict]) -> str:
-        """
-        MÉTODO DE COMPATIBILIDADE (HOOKS):
-        O ficheiro preferences/hooks.py mapeia explicitamente este atributo
-        durante o bootstrap da aplicação. Redireciona para o _summarise_relevant.
-        """
         return await self._summarise_relevant(query, emails)
 
     async def _generate_draft(self, query: str, context_email: dict) -> str:
@@ -285,7 +286,7 @@ class EmailAgent(BaseAgent):
             f"Conteúdo: {context_email.get('snippet', '')}\n\n"
             f"PEDIDO: {query}\n\n"
             "Gera uma proposta de resposta profissional e concisa em português. "
-            "Devolve apenas o texto da resposta, sem explicações."
+            "Devolve apenas o texto da resposta pura, sem justificações extras, metadados ou saudações genéricas repetidas."
         )
         resp = await self.client.chat.completions.create(
             model=self.settings.groq_model,
@@ -294,7 +295,8 @@ class EmailAgent(BaseAgent):
                     "role": "system",
                     "content": (
                         "És um assistente de email profissional. "
-                        "Geras respostas directas, claras e educadas."
+                        "Geras respostas diretas e contextualizadas ao email recebido. "
+                        "Nunca inclua assinaturas automáticas corporativas ou notas adicionais."
                     ),
                 },
                 {"role": "user", "content": prompt},
