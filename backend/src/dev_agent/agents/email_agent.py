@@ -1,13 +1,5 @@
 """
-EmailAgent — refactored.
-
-Mudanças principais:
-- Uma única chamada LLM classifica a intenção E extrai todos os detalhes estruturados
-  (recipient, subject, body). Elimina o sistema frágil de keywords + regex.
-- _pick_highlight absorvido dentro de _handle_read: lógica relevante consolidada.
-- _handle_draft usa o email mais relevante, não emails[0] às cegas.
-- Tipos estritos; sem lógica de deteção espalhada.
-- Retry com refresh de token centralizado num único lugar.
+EmailAgent — refactored & calibrated.
 """
 
 from __future__ import annotations
@@ -18,7 +10,7 @@ import re
 from typing import Awaitable, Callable, Literal, Optional
 
 from groq import AsyncGroq
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.config import get_settings
@@ -39,23 +31,24 @@ class EmailIntent(BaseModel):
     recipient: Optional[str] = None   # só para "send"
     subject: Optional[str] = None     # só para "send"
     body: Optional[str] = None        # só para "send" e "draft"
-    reasoning: str                    # justificação curta (útil para debug)
+    reasoning: str                    # justificação curta
 
     @field_validator("recipient")
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
+        # Sanitização simples por regex nativa para evitar dependências externas estritas
         if not re.fullmatch(r"[\w.+-]+@[\w-]+\.\w+", v):
             raise ValueError(f"Email inválido: {v}")
         return v
 
 
 # ---------------------------------------------------------------------------
-# Prompt de classificação
+# Prompt de classificação (Calibrado)
 # ---------------------------------------------------------------------------
 
-_CLASSIFY_SYSTEM = """\
+_CLASSIFY_SYSTEM = """\\
 You are an email intent classifier. Given a user query about email, respond ONLY with valid JSON.
 
 Output format:
@@ -68,12 +61,14 @@ Output format:
 }
 
 Rules:
-- "send"  → user wants to dispatch an email NOW. Must have a clear recipient (email address) and body content.
-- "draft" → user wants a suggested/composed email text but is NOT ready to send yet.
-- "read"  → user wants to read, search, or analyse their inbox.
-- If the query is ambiguous between send and draft, default to "draft".
-- Extract recipient only when an email address (@) is present.
-- Respond with ONLY the JSON object — no markdown, no extra text.
+- "send"  → The user explicitly and imperatively wants to transmit/dispatch/deliver an email RIGHT NOW (e.g., "envie", "enviar", "mande para", "dispare"). It MUST have a clear recipient email address and a final text body.
+- "draft" → The user wants to compose, write, suggest, or generate a response text, proposal, or draft (e.g., "gere uma proposta", "escreva uma resposta", "sugira um texto", "crie um rascunho"). Even if a recipient email is present in the prompt, if the action verbs are about "generating/suggesting/writing/proposing", it is ALWAYS a "draft", NOT a "send".
+- "read"  → The user wants to read, view, list, search, or analyse their inbox.
+
+Crucial Instruction:
+If the user uses words like "proposta", "sugestão", "rascunho", "draft", "escreva uma resposta" or "como responder", the intent is STRICTLY "draft". Do NOT classify as "send" unless the user gives a direct command to dispatch the message immediately.
+
+Respond with ONLY the JSON object — no markdown, no extra text.
 """
 
 
@@ -121,10 +116,6 @@ class EmailAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _classify(self, query: str) -> Optional[EmailIntent]:
-        """
-        Classifica a intenção da query numa única chamada LLM.
-        Retorna None se o LLM devolver JSON inválido após 2 tentativas.
-        """
         for attempt in range(2):
             try:
                 resp = await self.client.chat.completions.create(
@@ -133,7 +124,7 @@ class EmailAgent(BaseAgent):
                         {"role": "system", "content": _CLASSIFY_SYSTEM},
                         {"role": "user", "content": query},
                     ],
-                    temperature=0.0,   # zero: queremos determinismo na classificação
+                    temperature=0.0,
                     max_tokens=300,
                 )
                 raw = resp.choices[0].message.content or ""
@@ -180,13 +171,7 @@ class EmailAgent(BaseAgent):
             return self.failure(f"Erro ao enviar email: {exc}")
 
     async def _handle_draft(self, query: str, intent: EmailIntent) -> AgentResult:
-        """
-        Gera uma proposta de resposta.
-        Se o LLM já extraiu um body na classificação, usa-o directamente.
-        Caso contrário, busca os emails recentes e escolhe o contexto relevante.
-        """
-        # Se o LLM já produziu um rascunho directo, devolve-o
-        if intent.body and len(intent.body.strip()) > 20:
+        if intent.body and len(intent.body.strip()) > 30 and "prop" not in intent.body.lower():
             return self.success({
                 "action": "draft",
                 "proposed_response": intent.body.strip(),
@@ -195,7 +180,6 @@ class EmailAgent(BaseAgent):
                 ),
             })
 
-        # Precisamos de contexto — ler emails
         try:
             reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
             emails = await reader.get_recent_emails(max_results=15)
@@ -248,11 +232,6 @@ class EmailAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _pick_most_relevant(self, query: str, emails: list[dict]) -> dict:
-        """
-        Escolhe o email mais relevante para o contexto da query,
-        usando heurística simples baseada em palavras-chave.
-        Evita uma chamada LLM extra só para seleccionar um email.
-        """
         query_tokens = set(query.lower().split())
         best, best_score = emails[0], -1
 
@@ -267,10 +246,6 @@ class EmailAgent(BaseAgent):
         return best
 
     async def _summarise_relevant(self, query: str, emails: list[dict]) -> str:
-        """
-        Resume qual email é mais relevante para o pedido.
-        Consolida o que antes era _pick_highlight.
-        """
         listing = "\n".join(
             f"{i + 1}. De: {e['from']} | Assunto: {e['subject']} | {e['snippet'][:120]}"
             for i, e in enumerate(emails[:10])
@@ -296,14 +271,13 @@ class EmailAgent(BaseAgent):
         return resp.choices[0].message.content or "Análise concluída."
 
     async def _generate_draft(self, query: str, context_email: dict) -> str:
-        """Gera proposta de resposta com base num email de contexto."""
         prompt = (
             f"EMAIL RECEBIDO\n"
             f"De: {context_email.get('from', 'Desconhecido')}\n"
             f"Assunto: {context_email.get('subject', 'Sem assunto')}\n"
             f"Conteúdo: {context_email.get('snippet', '')}\n\n"
             f"PEDIDO: {query}\n\n"
-            "Gera uma proposta de resposta profissional e concisa em português. "
+            "Gera uma proposta de resposta professional e concisa em português. "
             "Devolve apenas o texto da resposta, sem explicações."
         )
         resp = await self.client.chat.completions.create(
