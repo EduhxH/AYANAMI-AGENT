@@ -90,6 +90,7 @@ class GitHubAgent(BaseAgent):
                 )
 
             print(f"[GITHUB_AGENT] Repositório identificado: {repo_name}")
+            repo_context = await self._build_repo_context(repo_name, reader)
             files = await reader.get_repo_files(repo_name)
             if not files:
                 print(f"[GITHUB_AGENT] Nenhum arquivo encontrado no repositório")
@@ -107,6 +108,7 @@ class GitHubAgent(BaseAgent):
                     "issues": analysis.get("issues", []),
                     "suggestions": analysis.get("suggestions", []),
                     "quality_score": analysis.get("quality_score"),
+                    "repo_context": repo_context,
                 }
             )
         except ValueError as e:
@@ -123,15 +125,17 @@ class GitHubAgent(BaseAgent):
             re.IGNORECASE,
         )
         if explicit_url:
+            owner = explicit_url.group(1)
             repo_name = explicit_url.group(2)
-            print(f"[GITHUB_AGENT] URL GitHub detectada, retornando repo '{repo_name}'")
-            return repo_name
+            print(f"[GITHUB_AGENT] URL GitHub detectada, retornando repo '{owner}/{repo_name}'")
+            return f"{owner}/{repo_name}"
 
         explicit_owner_repo = re.search(r"\b([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)\b", query)
         if explicit_owner_repo:
+            owner = explicit_owner_repo.group(1)
             repo_name = explicit_owner_repo.group(2)
-            print(f"[GITHUB_AGENT] Nome owner/repo detectado, retornando repo '{repo_name}'")
-            return repo_name
+            print(f"[GITHUB_AGENT] Nome owner/repo detectado, retornando repo '{owner}/{repo_name}'")
+            return f"{owner}/{repo_name}"
 
         hint = self._extract_repo_name_hint(query)
         if not hint:
@@ -142,6 +146,65 @@ class GitHubAgent(BaseAgent):
             username = await reader.get_authenticated_login()
 
         return await reader.find_repo_by_name(hint, username)
+
+    async def _build_repo_context(self, repo: str, reader: GitHubReader) -> dict:
+        summary = {}
+        readme = None
+        file_tree = []
+        config_files = []
+        main_entry_files = []
+
+        try:
+            summary = await reader.get_repo_summary(repo)
+        except Exception as exc:
+            print(f"[GITHUB_AGENT] Falha ao obter resumo do repositório: {exc}")
+
+        try:
+            root_contents = await reader.get_repo_root_contents(repo)
+            file_tree = [f"{item.get('type')} {item.get('name')}" for item in root_contents]
+            entry_map = {item.get("name", "").lower(): item for item in root_contents if item.get("type") == "file"}
+
+            for candidate in ("readme.md", "readme"):
+                if candidate in entry_map:
+                    readme = await reader.get_repo_file_content(repo, entry_map[candidate]["path"])
+                    break
+
+            config_candidates = [
+                "package.json",
+                "requirements.txt",
+                "pyproject.toml",
+                "go.mod",
+                "dockerfile",
+            ]
+            for name in config_candidates:
+                item = entry_map.get(name)
+                if item:
+                    content = await reader.get_repo_file_content(repo, item["path"])
+                    if content is not None:
+                        config_files.append({"path": item["path"], "content": content})
+
+            main_candidates = ["main.py", "index.js", "app.py", "src/main.py", "src/index.js"]
+            for name in main_candidates:
+                item = entry_map.get(name)
+                if item:
+                    content = await reader.get_repo_file_content(repo, item["path"])
+                    if content is not None:
+                        main_entry_files.append({"path": item["path"], "content": content})
+                    continue
+
+                content = await reader.get_repo_file_content(repo, name)
+                if content is not None:
+                    main_entry_files.append({"path": name, "content": content})
+        except Exception as exc:
+            print(f"[GITHUB_AGENT] Falha ao construir contexto de repositório: {exc}")
+
+        return {
+            "summary": summary,
+            "readme": readme,
+            "file_tree": file_tree,
+            "config_files": config_files,
+            "main_entry_files": main_entry_files,
+        }
 
     def _is_create_repo_request(self, query: str) -> bool:
         q = query.lower()

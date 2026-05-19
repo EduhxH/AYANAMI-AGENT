@@ -106,6 +106,41 @@ class GitHubReader:
                 "html_url": meta.get("html_url"),
             }
 
+    async def get_repo_root_contents(self, repo: str) -> List[Dict]:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/repos/{repo}/contents",
+                headers=self.headers,
+            )
+
+            if response.status_code == 404:
+                raise ValueError(f"Repositório não encontrado: {repo}")
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Erro ao aceder ao conteúdo do repo {repo}: {response.status_code} — {response.text[:200]}"
+                )
+
+            data = response.json()
+            if isinstance(data, dict):
+                data = [data]
+            return data
+
+    async def get_repo_file_content(self, repo: str, path: str) -> str | None:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/repos/{repo}/contents/{path}",
+                headers=self.headers,
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            if not data or not data.get("content"):
+                return None
+            try:
+                return base64.b64decode(data["content"]).decode("utf-8", errors="ignore")
+            except Exception:
+                return None
+
     async def get_repo_archive_files(self, repo: str) -> List[Dict]:
         """Download the repository zipball and extract text and small images for analysis."""
         async with httpx.AsyncClient() as client:

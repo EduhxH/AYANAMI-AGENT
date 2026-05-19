@@ -26,9 +26,11 @@ class Planner:
         Pedido: "{query}"
         
         Agentes disponíveis:
-        - "github": para analisar código, repos, criar PRs, ver commits
+        - "github": para analisar código, repos, criar PRs, ver commits, resumir projetos, inspecionar README, analisar package.json/requirements.txt/pyproject.toml/Dockerfile e trabalhar com repositórios GitHub.
         - "email": para ler emails, responder, classificar
         - "anime": apenas se o utilizador pedir recomendações de anime (easter egg)
+        
+        Usa o agente "github" sempre que o pedido envolver qualquer tipo de análise ou resumo de repositório, README, stars, commits, package.json, requirements.txt, pyproject.toml, Dockerfile, main.py, index.js, app.py ou menção de um repositório específico como "AYANAMI-AGENT".
         
         Responde APENAS com JSON válido, sem texto adicional:
         {{"agents": ["github", "email"]}}
@@ -58,7 +60,11 @@ class Planner:
             
             agents = []
             query_lower = query.lower()
-            if any(word in query_lower for word in ["repo", "código", "pr", "github", "commit", "crie", "criar", "delete", "deletar", "remover"]):
+            if any(word in query_lower for word in [
+                "repo", "repositório", "repositório", "código", "pr", "github", "commit",
+                "resuma", "resumir", "analise", "analisa", "stars", "readme", "dockerfile",
+                "package.json", "requirements.txt", "pyproject.toml", "main.py", "index.js", "app.py",
+            ]):
                 agents.append(AgentType.GITHUB)
             if any(word in query_lower for word in ["email", "gmail", "mensagem", "responde"]):
                 agents.append(AgentType.EMAIL)
