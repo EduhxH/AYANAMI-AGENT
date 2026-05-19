@@ -119,6 +119,16 @@ export const api = {
     return request<MessageResponse>(`/auth/callback/google?${params.toString()}`);
   },
 
+  disconnectGithub: () =>
+    request<MessageResponse>("/auth/disconnect/github", {
+      method: "POST",
+    }),
+
+  disconnectGoogle: () =>
+    request<MessageResponse>("/auth/disconnect/google", {
+      method: "POST",
+    }),
+
   query: (query: string) =>
     request<QueryResponse>("/query/", {
       method: "POST",

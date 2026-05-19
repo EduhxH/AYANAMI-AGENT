@@ -33,6 +33,8 @@ export function SettingsOverlay() {
   const [saving, setSaving] = useState(false);
   const [loadingGithub, setLoadingGithub] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
+  const [disconnectingGithub, setDisconnectingGithub] = useState(false);
+  const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -102,6 +104,36 @@ export function SettingsOverlay() {
     } catch (err) {
       setError(getAuthErrorMessage(err));
       setLoadingGoogle(false);
+    }
+  }
+
+  async function disconnectGithub() {
+    setDisconnectingGithub(true);
+    setError("");
+    setSuccess("");
+    try {
+      await api.disconnectGithub();
+      setSuccess("GitHub desconectado com sucesso");
+      refreshUser();
+    } catch (err) {
+      setError(getAuthErrorMessage(err));
+    } finally {
+      setDisconnectingGithub(false);
+    }
+  }
+
+  async function disconnectGoogle() {
+    setDisconnectingGoogle(true);
+    setError("");
+    setSuccess("");
+    try {
+      await api.disconnectGoogle();
+      setSuccess("Gmail desconectado com sucesso");
+      refreshUser();
+    } catch (err) {
+      setError(getAuthErrorMessage(err));
+    } finally {
+      setDisconnectingGoogle(false);
     }
   }
 
@@ -193,7 +225,9 @@ export function SettingsOverlay() {
                   : "Não ligado"
               }
               loading={loadingGithub}
+              disconnecting={disconnectingGithub}
               onConnect={connectGithub}
+              onDisconnect={disconnectGithub}
             />
             <ConnectionRow
               icon={Mail}
@@ -201,7 +235,9 @@ export function SettingsOverlay() {
               connected={!!user?.has_google}
               detail={user?.has_google ? "Ligado" : "Não ligado"}
               loading={loadingGoogle}
+              disconnecting={disconnectingGoogle}
               onConnect={connectGoogle}
+              onDisconnect={disconnectGoogle}
             />
           </motion.section>
 
@@ -256,14 +292,18 @@ function ConnectionRow({
   connected,
   detail,
   loading,
+  disconnecting,
   onConnect,
+  onDisconnect,
 }: {
   icon: typeof GitBranch;
   label: string;
   connected: boolean;
   detail: string;
   loading: boolean;
+  disconnecting: boolean;
   onConnect: () => void;
+  onDisconnect: () => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-theme bg-[var(--bg-input)] px-4 py-3 transition-colors hover:border-theme-strong">
@@ -283,24 +323,43 @@ function ConnectionRow({
           </p>
         </div>
       </div>
-      <Button
-        type="button"
-        size="sm"
-        variant={connected ? "secondary" : "default"}
-        disabled={connected || loading}
-        onClick={onConnect}
-        className="shrink-0"
-      >
-        {loading ? (
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          </span>
-        ) : connected ? (
-          "Ligado ✓"
-        ) : (
-          "Ligar"
+      <div className="flex items-center gap-2 shrink-0">
+        {connected && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={disconnecting}
+            onClick={onDisconnect}
+            className="text-xs text-muted hover:text-red-400"
+          >
+            {disconnecting ? (
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              </span>
+            ) : (
+              "Desligar"
+            )}
+          </Button>
         )}
-      </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={connected ? "secondary" : "default"}
+          disabled={connected || loading}
+          onClick={onConnect}
+        >
+          {loading ? (
+            <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            </span>
+          ) : connected ? (
+            "Ligado ✓"
+          ) : (
+            "Ligar"
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

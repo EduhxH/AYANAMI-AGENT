@@ -240,3 +240,27 @@ async def google_callback(
         if browser:
             return _oauth_error_redirect("google", str(e))
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Disconnect/Revoke ────────────────────────────────────────────
+
+@router.post("/disconnect/github")
+async def disconnect_github(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """Remove GitHub token and username for the current user."""
+    users_repo = UsersRepository(db)
+    await users_repo.remove_github_token(current_user.id)
+    return {"message": "GitHub desconectado com sucesso"}
+
+
+@router.post("/disconnect/google")
+async def disconnect_google(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """Remove Google token for the current user."""
+    users_repo = UsersRepository(db)
+    await users_repo.remove_google_token(current_user.id)
+    return {"message": "Gmail desconectado com sucesso"}

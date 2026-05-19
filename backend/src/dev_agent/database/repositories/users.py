@@ -82,6 +82,20 @@ class UsersRepository:
             {"$set": {"last_login": datetime.utcnow()}}
         )
 
+    async def remove_github_token(self, user_id: str) -> None:
+        """Remove GitHub token and username for the user."""
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"github_token": None, "github_username": None}}
+        )
+
+    async def remove_google_token(self, user_id: str) -> None:
+        """Remove Google token and refresh_token for the user."""
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"google_token": None, "google_refresh_token": None}}
+        )
+
     def _generate_verification_code(self) -> str:
         """Gera um código de 6 dígitos."""
         return "".join(random.choices(string.digits, k=6))
