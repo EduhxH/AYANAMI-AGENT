@@ -23,6 +23,13 @@ async def handle_query(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
+    print("=" * 80)
+    print("[ROUTE /query/] Nova requisição recebida")
+    print(f"[ROUTE /query/] Query: {body.query!r}")
+    print(f"[ROUTE /query/] User: {current_user.email} (id={current_user.id})")
+    print(f"[ROUTE /query/] Agentes forçados: {body.agents}")
+    print("=" * 80)
+    
     users_repo = UsersRepository(db)
 
     # Buscar usuário atualizado do banco de dados para garantir tokens recentes
@@ -32,6 +39,10 @@ async def handle_query(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Utilizador não encontrado na sessão",
         )
+
+    print(f"[ROUTE /query/] Usuário atualizado do BD:")
+    print(f"  - github_token: {'***' if user.github_token else 'NULL'}")
+    print(f"  - github_username: {user.github_username}")
 
     async def refresh_google() -> str:
         refreshed_user = await users_repo.find_by_id(user.id)

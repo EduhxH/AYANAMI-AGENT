@@ -15,6 +15,11 @@ class Planner:
         Usa o LLM para analisar a query e decidir quais agentes activar.
         Devolve uma lista de AgentType.
         """
+        print("=" * 80)
+        print("[PLANNER] === INPUT DO CHAT ===")
+        print(f"[PLANNER] Query recebida: {query!r}")
+        print("=" * 80)
+        
         prompt = f"""
         Analisa o seguinte pedido de um developer e decide quais agentes activar.
         
@@ -38,16 +43,28 @@ class Planner:
         )
         
         content = response.choices[0].message.content.strip()
+        print(f"[PLANNER] Resposta do LLM (raw): {content!r}")
         
         try:
             data = json.loads(content)
-            return [AgentType(a) for a in data["agents"]]
-        except (json.JSONDecodeError, KeyError, ValueError):
-           
+            agents = [AgentType(a) for a in data["agents"]]
+            print(f"[PLANNER] === INTENÇÃO DETECTADA ===")
+            print(f"[PLANNER] Agentes selecionados: {[a.value for a in agents]}")
+            print("=" * 80)
+            return agents
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            print(f"[PLANNER] ERRO ao parsear JSON LLM: {e}")
+            print(f"[PLANNER] Caindo para heurística de fallback...")
+            
             agents = []
             query_lower = query.lower()
-            if any(word in query_lower for word in ["repo", "código", "pr", "github", "commit"]):
+            if any(word in query_lower for word in ["repo", "código", "pr", "github", "commit", "crie", "criar", "delete", "deletar", "remover"]):
                 agents.append(AgentType.GITHUB)
             if any(word in query_lower for word in ["email", "gmail", "mensagem", "responde"]):
                 agents.append(AgentType.EMAIL)
-            return agents or [AgentType.GITHUB]  
+            
+            result_agents = agents or [AgentType.GITHUB]
+            print(f"[PLANNER] === INTENÇÃO DETECTADA (FALLBACK) ===")
+            print(f"[PLANNER] Agentes selecionados: {[a.value for a in result_agents]}")
+            print("=" * 80)
+            return result_agents  

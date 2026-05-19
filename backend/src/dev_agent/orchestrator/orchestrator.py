@@ -17,12 +17,20 @@ class Orchestrator:
         self.on_google_token_refresh = on_google_token_refresh
 
     async def handle(self, request: TaskRequest, user_data: dict) -> OrchestratorResult:
+        print(f"[ORCHESTRATOR] Recebendo TaskRequest: query={request.query!r}, agents={request.agents}")
+        print(f"[ORCHESTRATOR] user_data: user_id={user_data.get('user_id')}, github_token={'***' if user_data.get('github_token') else 'NULL'}, github_username={user_data.get('github_username')}")
+        
         agents = request.agents or await self.planner.decide_agents(request.query)
+        print(f"[ORCHESTRATOR] Agentes a executar: {[a.value for a in agents]}")
 
         dispatcher = Dispatcher(user_data, self.on_google_token_refresh)
+        print(f"[ORCHESTRATOR] Iniciando Dispatcher com {len(agents)} agentes...")
+        
         results = await dispatcher.run(request.query, agents)
+        print(f"[ORCHESTRATOR] Dispatcher completado com {len(results)} resultados")
 
         summary = await self._generate_summary(request.query, results)
+        print(f"[ORCHESTRATOR] Summary gerado: {summary[:100]}...")
 
         return OrchestratorResult(
             query=request.query,

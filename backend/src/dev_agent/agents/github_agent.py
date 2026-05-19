@@ -23,13 +23,27 @@ class GitHubAgent(BaseAgent):
         self.github_username = github_username
 
     async def run(self, query: str) -> AgentResult:
+        print(f"[GITHUB_AGENT] run() chamado")
+        print(f"[GITHUB_AGENT] Query: {query!r}")
+        print(f"[GITHUB_AGENT] Token: {'***' if self.token else 'NULL'}")
+        print(f"[GITHUB_AGENT] Username: {self.github_username}")
+        
         settings = get_settings()
 
         try:
             # Validação explícita do token do GitHub ao iniciar
-            if self._is_delete_repo_request(query) or self._is_create_repo_request(query):
+            is_delete = self._is_delete_repo_request(query)
+            is_create = self._is_create_repo_request(query)
+            
+            print(f"[GITHUB_AGENT] is_delete_request: {is_delete}")
+            print(f"[GITHUB_AGENT] is_create_request: {is_create}")
+            
+            if is_delete or is_create:
+                print(f"[GITHUB_AGENT] Operação de create/delete detectada")
                 if not self.token or (isinstance(self.token, str) and self.token.strip() == ""):
+                    print(f"[GITHUB_AGENT] Token vazio/nulo detectado - lançando ValueError")
                     raise ValueError("Token do GitHub não encontrado para a sessão atual.")
+                print(f"[GITHUB_AGENT] Token validado com sucesso")
 
             if self.token:
                 reader = GitHubReader(self.token)
@@ -38,28 +52,35 @@ class GitHubAgent(BaseAgent):
                 reader = LocalRepoReader(settings.local_repo_root if hasattr(settings, 'local_repo_root') else None)
                 writer = None
 
-            if self._is_delete_repo_request(query):
+            if is_delete:
+                print(f"[GITHUB_AGENT] Executando _delete_repository")
                 return await self._delete_repository(query, writer)
 
-            if self._is_create_repo_request(query):
+            if is_create:
+                print(f"[GITHUB_AGENT] Executando _create_repository")
                 return await self._create_repository(query, writer)
 
             analyser = GitHubAnalyser()
 
+            print(f"[GITHUB_AGENT] Resolvendo nome do repositório...")
             repo_name = await self._resolve_repo(query, reader)
             if not repo_name:
+                print(f"[GITHUB_AGENT] Falha ao resolver nome do repositório")
                 return self.failure(
                     "Não consegui identificar o repositório."
                 )
 
+            print(f"[GITHUB_AGENT] Repositório identificado: {repo_name}")
             files = await reader.get_repo_files(repo_name)
             if not files:
+                print(f"[GITHUB_AGENT] Nenhum arquivo encontrado no repositório")
                 return self.failure(
                     f"O repositório {repo_name} não tem ficheiros de código reconhecidos na raiz."
                 )
 
             analysis = await analyser.analyse(files, query)
 
+            print(f"[GITHUB_AGENT] Análise completada com sucesso")
             return self.success(
                 {
                     "repo": repo_name,
@@ -70,8 +91,10 @@ class GitHubAgent(BaseAgent):
                 }
             )
         except ValueError as e:
+            print(f"[GITHUB_AGENT] ValueError capturada: {e}")
             return self.failure(f"[RAW ERROR] {e}")
         except Exception as e:
+            print(f"[GITHUB_AGENT] Exception inesperada capturada: {type(e).__name__}: {e}")
             return self.failure(f"[UNEXPECTED ERROR] {type(e).__name__}: {e}")
 
     async def _resolve_repo(self, query: str, reader: GitHubReader) -> str | None:
@@ -108,24 +131,35 @@ class GitHubAgent(BaseAgent):
         )
 
     async def _create_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
-        print(f"===> ENTRANDO NA CRIAÇÃO DE REPO (github_agent): query={query!r}")
+        print(f"[GITHUB_AGENT] _create_repository() chamado")
+        print(f"[GITHUB_AGENT] Query: {query!r}")
+        print(f"[GITHUB_AGENT] Writer: {writer}")
+        
         name = self._extract_repo_name_hint(query)
+        print(f"[GITHUB_AGENT] Nome extraído: {name!r}")
         if not name:
+            print(f"[GITHUB_AGENT] Falha ao extrair nome do repositório")
             return self.failure("Nome do repositório não identificado.")
 
         visibility = self._resolve_repository_visibility(query)
         owner = self.github_username
+        
+        print(f"[GITHUB_AGENT] Visibilidade: {visibility}")
+        print(f"[GITHUB_AGENT] Owner: {owner}")
 
         # Extract optional description hint from the query (e.g. 'no readme coloque X')
         description = self._extract_description_hint(query)
+        print(f"[GITHUB_AGENT] Descrição: {description!r}")
 
         try:
+            print(f"[GITHUB_AGENT] Chamando writer.create_repo()...")
             result = await writer.create_repo(
                 name=name,
                 private=visibility == "private",
                 owner=owner,
                 description=description,
             )
+            print(f"[GITHUB_AGENT] create_repo retornou: {result}")
             return self.success(
                 {
                     "repo": result.get("full_name"),
