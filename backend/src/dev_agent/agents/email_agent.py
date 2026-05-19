@@ -1,16 +1,85 @@
-from typing import Callable, Awaitable, Optional
+"""
+EmailAgent — refactored.
+
+Mudanças principais:
+- Uma única chamada LLM classifica a intenção E extrai todos os detalhes estruturados
+  (recipient, subject, body). Elimina o sistema frágil de keywords + regex.
+- _pick_highlight absorvido dentro de _handle_read: lógica relevante consolidada.
+- _handle_draft usa o email mais relevante, não emails[0] às cegas.
+- Tipos estritos; sem lógica de deteção espalhada.
+- Retry com refresh de token centralizado num único lugar.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
 import re
+from typing import Awaitable, Callable, Literal, Optional
 
 from groq import AsyncGroq
+from pydantic import BaseModel, EmailStr, field_validator
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.config import get_settings
-from dev_agent.core.models import AgentType, AgentResult
+from dev_agent.core.models import AgentResult, AgentType
 from dev_agent.tools.email.reader import GmailReader
 from dev_agent.tools.email.sender import GmailSender
 
+logger = logging.getLogger(__name__)
+
 TokenRefreshCallback = Callable[[], Awaitable[str]]
 
+# ---------------------------------------------------------------------------
+# Schema de classificação retornado pelo LLM
+# ---------------------------------------------------------------------------
+
+class EmailIntent(BaseModel):
+    intent: Literal["send", "draft", "read"]
+    recipient: Optional[str] = None   # só para "send"
+    subject: Optional[str] = None     # só para "send"
+    body: Optional[str] = None        # só para "send" e "draft"
+    reasoning: str                    # justificação curta (útil para debug)
+
+    @field_validator("recipient")
+    @classmethod
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"[\w.+-]+@[\w-]+\.\w+", v):
+            raise ValueError(f"Email inválido: {v}")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Prompt de classificação
+# ---------------------------------------------------------------------------
+
+_CLASSIFY_SYSTEM = """\
+You are an email intent classifier. Given a user query about email, respond ONLY with valid JSON.
+
+Output format:
+{
+  "intent": "send" | "draft" | "read",
+  "recipient": "<email address or null>",
+  "subject": "<subject line or null>",
+  "body": "<email body or null>",
+  "reasoning": "<one sentence>"
+}
+
+Rules:
+- "send"  → user wants to dispatch an email NOW. Must have a clear recipient (email address) and body content.
+- "draft" → user wants a suggested/composed email text but is NOT ready to send yet.
+- "read"  → user wants to read, search, or analyse their inbox.
+- If the query is ambiguous between send and draft, default to "draft".
+- Extract recipient only when an email address (@) is present.
+- Respond with ONLY the JSON object — no markdown, no extra text.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
 
 class EmailAgent(BaseAgent):
     agent_type = AgentType.EMAIL
@@ -19,179 +88,237 @@ class EmailAgent(BaseAgent):
         self,
         token: str | None,
         on_token_refresh: Optional[TokenRefreshCallback] = None,
-    ):
+    ) -> None:
         self.token = token
         self.on_token_refresh = on_token_refresh
         self.settings = get_settings()
         self.client = AsyncGroq(api_key=self.settings.groq_api_key)
 
+    # ------------------------------------------------------------------
+    # Entry point
+    # ------------------------------------------------------------------
+
     async def run(self, query: str) -> AgentResult:
         if not self.token:
             return self.failure("Gmail não está ligado. Liga a tua conta primeiro.")
 
-        # Detectar intenção: ler ou enviar?
-        is_send_intent = self._is_send_intent(query)
+        intent = await self._classify(query)
+        if intent is None:
+            return self.failure("Não consegui interpretar o pedido. Tenta ser mais específico.")
 
-        if is_send_intent:
-            # Extrair destinatário e corpo do email
-            recipient, subject, body = await self._extract_email_details(query)
-            if not recipient:
-                return self.failure("Não consegui extrair o destinatário. Tenta: 'Enviar para user@example.com: Olá...'")
-            
+        logger.debug("EmailAgent intent=%s reasoning=%s", intent.intent, intent.reasoning)
+
+        match intent.intent:
+            case "send":
+                return await self._handle_send(intent)
+            case "draft":
+                return await self._handle_draft(query, intent)
+            case "read":
+                return await self._handle_read(query)
+
+    # ------------------------------------------------------------------
+    # Intent classification (single LLM call)
+    # ------------------------------------------------------------------
+
+    async def _classify(self, query: str) -> Optional[EmailIntent]:
+        """
+        Classifica a intenção da query numa única chamada LLM.
+        Retorna None se o LLM devolver JSON inválido após 2 tentativas.
+        """
+        for attempt in range(2):
             try:
-                sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
-                result = await sender.send_email(
-                    to=recipient,
-                    subject=subject,
-                    body=body,
+                resp = await self.client.chat.completions.create(
+                    model=self.settings.groq_model,
+                    messages=[
+                        {"role": "system", "content": _CLASSIFY_SYSTEM},
+                        {"role": "user", "content": query},
+                    ],
+                    temperature=0.0,   # zero: queremos determinismo na classificação
+                    max_tokens=300,
                 )
-                return self.success({
-                    "action": "send",
-                    "recipient": recipient,
-                    "subject": subject,
-                    "body_preview": body[:150],
-                    "result": result,
-                })
-            except Exception as e:
-                return self.failure(f"Erro ao enviar email: {str(e)}")
-        else:
-            # Ação padrão: ler e analisar emails
-            try:
-                reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
-                emails = await reader.get_recent_emails(max_results=15)
+                raw = resp.choices[0].message.content or ""
+                data = json.loads(raw)
+                return EmailIntent(**data)
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.warning("Classify attempt %d failed: %s", attempt + 1, exc)
 
-                if not emails:
-                    return self.success(
-                        {
-                            "action": "read",
-                            "emails_found": 0,
-                            "emails": [],
-                            "highlight": "Não há emails recentes na inbox.",
-                        }
-                    )
+        return None
 
-                highlight = await self._pick_highlight(query, emails)
+    # ------------------------------------------------------------------
+    # Handlers
+    # ------------------------------------------------------------------
 
-                return self.success(
-                    {
-                        "action": "read",
-                        "emails_found": len(emails),
-                        "emails": emails[:10],
-                        "highlight": highlight,
-                    }
-                )
-            except Exception as e:
-                return self.failure(str(e))
+    async def _handle_send(self, intent: EmailIntent) -> AgentResult:
+        if not intent.recipient:
+            return self.failure(
+                "Não consegui identificar o destinatário. "
+                "Inclui o endereço de email no pedido (ex: 'Envia para user@example.com: ...')."
+            )
+        body = (intent.body or "").strip()
+        if len(body) < 3:
+            return self.failure(
+                "Corpo do email muito curto ou vazio. "
+                "Fornece o texto que queres enviar."
+            )
 
-    async def _pick_highlight(self, query: str, emails: list) -> str:
-        """Escolhe o email mais relevante para o pedido do utilizador."""
+        try:
+            sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
+            result = await sender.send_email(
+                to=intent.recipient,
+                subject=intent.subject or "Sem assunto",
+                body=body,
+            )
+            return self.success({
+                "action": "send",
+                "recipient": intent.recipient,
+                "subject": intent.subject,
+                "body_preview": body[:150],
+                "result": result,
+            })
+        except Exception as exc:
+            logger.exception("Erro ao enviar email")
+            return self.failure(f"Erro ao enviar email: {exc}")
+
+    async def _handle_draft(self, query: str, intent: EmailIntent) -> AgentResult:
+        """
+        Gera uma proposta de resposta.
+        Se o LLM já extraiu um body na classificação, usa-o directamente.
+        Caso contrário, busca os emails recentes e escolhe o contexto relevante.
+        """
+        # Se o LLM já produziu um rascunho directo, devolve-o
+        if intent.body and len(intent.body.strip()) > 20:
+            return self.success({
+                "action": "draft",
+                "proposed_response": intent.body.strip(),
+                "instructions": (
+                    "Sugestão gerada. Usa 'Envia para user@example.com: [texto]' para enviar."
+                ),
+            })
+
+        # Precisamos de contexto — ler emails
+        try:
+            reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
+            emails = await reader.get_recent_emails(max_results=15)
+        except Exception as exc:
+            logger.exception("Erro ao ler emails para draft")
+            return self.failure(f"Erro ao aceder ao Gmail: {exc}")
+
+        if not emails:
+            return self.failure("Não há emails recentes para usar como contexto.")
+
+        context_email = self._pick_most_relevant(query, emails)
+        draft_text = await self._generate_draft(query, context_email)
+
+        return self.success({
+            "action": "draft",
+            "context_from": context_email.get("from", "Desconhecido"),
+            "context_subject": context_email.get("subject", "Sem assunto"),
+            "proposed_response": draft_text,
+            "instructions": (
+                "Sugestão de resposta. Usa 'Envia para user@example.com: [texto]' para enviar."
+            ),
+        })
+
+    async def _handle_read(self, query: str) -> AgentResult:
+        try:
+            reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
+            emails = await reader.get_recent_emails(max_results=15)
+        except Exception as exc:
+            logger.exception("Erro ao ler emails")
+            return self.failure(f"Erro ao aceder ao Gmail: {exc}")
+
+        if not emails:
+            return self.success({
+                "action": "read",
+                "emails_found": 0,
+                "emails": [],
+                "highlight": "Não há emails recentes na inbox.",
+            })
+
+        highlight = await self._summarise_relevant(query, emails)
+        return self.success({
+            "action": "read",
+            "emails_found": len(emails),
+            "emails": emails[:10],
+            "highlight": highlight,
+        })
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _pick_most_relevant(self, query: str, emails: list[dict]) -> dict:
+        """
+        Escolhe o email mais relevante para o contexto da query,
+        usando heurística simples baseada em palavras-chave.
+        Evita uma chamada LLM extra só para seleccionar um email.
+        """
+        query_tokens = set(query.lower().split())
+        best, best_score = emails[0], -1
+
+        for email in emails[:10]:
+            combined = (
+                f"{email.get('from', '')} {email.get('subject', '')} {email.get('snippet', '')}"
+            ).lower()
+            score = sum(1 for token in query_tokens if token in combined)
+            if score > best_score:
+                best, best_score = email, score
+
+        return best
+
+    async def _summarise_relevant(self, query: str, emails: list[dict]) -> str:
+        """
+        Resume qual email é mais relevante para o pedido.
+        Consolida o que antes era _pick_highlight.
+        """
         listing = "\n".join(
-            [
-                f"{i + 1}. De: {e['from']} | Assunto: {e['subject']} | {e['snippet'][:120]}"
-                for i, e in enumerate(emails[:10])
-            ]
+            f"{i + 1}. De: {e['from']} | Assunto: {e['subject']} | {e['snippet'][:120]}"
+            for i, e in enumerate(emails[:10])
         )
+        resp = await self.client.chat.completions.create(
+            model=self.settings.groq_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "És um assistente de email. Responde em português, de forma clara e concisa.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Pedido: {query}\n\nEmails recentes:\n{listing}\n\n"
+                        "Em 2-3 frases: qual é o email mais relevante para este pedido e porquê?"
+                    ),
+                },
+            ],
+            temperature=0.3,
+            max_tokens=200,
+        )
+        return resp.choices[0].message.content or "Análise concluída."
 
-        response = await self.client.chat.completions.create(
+    async def _generate_draft(self, query: str, context_email: dict) -> str:
+        """Gera proposta de resposta com base num email de contexto."""
+        prompt = (
+            f"EMAIL RECEBIDO\n"
+            f"De: {context_email.get('from', 'Desconhecido')}\n"
+            f"Assunto: {context_email.get('subject', 'Sem assunto')}\n"
+            f"Conteúdo: {context_email.get('snippet', '')}\n\n"
+            f"PEDIDO: {query}\n\n"
+            "Gera uma proposta de resposta profissional e concisa em português. "
+            "Devolve apenas o texto da resposta, sem explicações."
+        )
+        resp = await self.client.chat.completions.create(
             model=self.settings.groq_model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "És um assistente de email. Responde em português, de forma clara e útil."
+                        "És um assistente de email profissional. "
+                        "Geras respostas directas, claras e educadas."
                     ),
                 },
-                {
-                    "role": "user",
-                    "content": f"""
-Pedido: {query}
-
-Emails recentes:
-{listing}
-
-Indica qual é o email mais interessante/relevante para este pedido e explica porquê em 2-4 frases.
-Se nenhum for especialmente relevante, diz qual merece atenção primeiro.
-""",
-                },
+                {"role": "user", "content": prompt},
             ],
             temperature=0.5,
+            max_tokens=400,
         )
-
-        return response.choices[0].message.content or "Análise concluída."
-
-    def _is_send_intent(self, query: str) -> bool:
-        """Detecta se a query é uma intenção de ENVIO de email."""
-        query_lower = query.lower()
-        
-        # Palavras-chave explícitas de envio
-        send_keywords = [
-            "envie",
-            "enviar",
-            "mande",
-            "mandar",
-            "responda",
-            "responder",
-            "escreva",
-            "escrever",
-            "compose",
-            "envio",
-            "gere uma proposta",
-            "gere uma resposta",
-        ]
-        
-        # Verificar se contém palavras-chave de envio
-        for keyword in send_keywords:
-            if keyword in query_lower:
-                return True
-        
-        # Detectar padrão de texto longo entre aspas (possível corpo de email)
-        # Exemplo: 'Enviar para user@example.com: "Este é o corpo do email"'
-        if '"' in query and len(query) > 50:
-            return True
-        
-        if "'" in query and len(query) > 50:
-            return True
-        
-        return False
-
-    async def _extract_email_details(self, query: str) -> tuple:
-        """
-        Extrai destinatário, assunto e corpo da query.
-        Retorna (destinatário, assunto, corpo) ou (None, "", "") se falhar.
-        """
-        # Tentar extrair email
-        email_pattern = r'[\w\.-]+@[\w\.-]+\.\w+'
-        email_match = re.search(email_pattern, query)
-        recipient = email_match.group(0) if email_match else None
-        
-        if not recipient:
-            return None, "", ""
-        
-        # Tentar extrair corpo entre aspas
-        body = ""
-        quote_pattern = r'["\']([^"\']+)["\']'
-        quote_match = re.search(quote_pattern, query)
-        if quote_match:
-            body = quote_match.group(1)
-        else:
-            # Se não houver aspas, usar o resto da query após o email
-            parts = query.split(recipient, 1)
-            if len(parts) > 1:
-                body = parts[1].strip().lstrip(":").strip()
-        
-        # Extrair assunto (pode estar após "para:" ou "assunto:")
-        subject = "Resposta"
-        subject_pattern = r'(?:assunto|subject|subj)\s*[:=]\s*([^\n]+)'
-        subject_match = re.search(subject_pattern, query, re.IGNORECASE)
-        if subject_match:
-            subject = subject_match.group(1).strip()
-        elif "resposta" in query.lower() or "responda" in query.lower():
-            subject = "Re: " + (subject if subject else "Mensagem")
-        
-        # Se o corpo ainda estiver vazio, usar a query completa após o email
-        if not body:
-            body = query.replace(recipient, "").strip()
-            body = re.sub(r'^[:\-\s]+', '', body).strip()
-        
-        return recipient, subject, body
-
+        return resp.choices[0].message.content or "Não foi possível gerar uma proposta."
