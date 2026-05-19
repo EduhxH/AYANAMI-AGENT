@@ -27,10 +27,18 @@ class Planner:
         
         Agentes disponíveis:
         - "github": para analisar código, repos, criar PRs, ver commits, resumir projetos, inspecionar README, analisar package.json/requirements.txt/pyproject.toml/Dockerfile e trabalhar com repositórios GitHub.
-        - "email": para ler emails, responder, classificar
+        - "email": para ler emails, responder, enviar, escrever, classificar, gerar propostas de resposta
         - "anime": apenas se o utilizador pedir recomendações de anime (easter egg)
         
         Usa o agente "github" sempre que o pedido envolver qualquer tipo de análise ou resumo de repositório, README, stars, commits, package.json, requirements.txt, pyproject.toml, Dockerfile, main.py, index.js, app.py ou menção de um repositório específico como "AYANAMI-AGENT".
+        
+        Usa o agente "email" quando o pedido envolver:
+        - Ler, buscar, ou analisar emails
+        - Responder a emails (palavras como "responda", "responde", "responder", "reply")
+        - Enviar emails (palavras como "envie", "enviar", "mande", "mandar", "envio")
+        - Escrever emails ou propostas de resposta (palavras como "escreva", "escrever", "gere uma resposta", "gere uma proposta", "draft", "rascunho")
+        - Classificar ou organizar emails
+        - Qualquer operação de Gmail/correio
         
         Responde APENAS com JSON válido, sem texto adicional:
         {{"agents": ["github", "email"]}}
@@ -66,7 +74,11 @@ class Planner:
                 "package.json", "requirements.txt", "pyproject.toml", "main.py", "index.js", "app.py",
             ]):
                 agents.append(AgentType.GITHUB)
-            if any(word in query_lower for word in ["email", "gmail", "mensagem", "responde"]):
+            if any(word in query_lower for word in [
+                "email", "gmail", "mensagem", "responde", "responder", "envie", "enviar", 
+                "mande", "mandar", "escreva", "escrever", "gere uma resposta", "gere uma proposta",
+                "resposta", "envio", "compose", "rascunho", "draft", "correio"
+            ]):
                 agents.append(AgentType.EMAIL)
             
             result_agents = agents or [AgentType.GITHUB]
