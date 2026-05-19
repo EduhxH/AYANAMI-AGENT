@@ -33,6 +33,13 @@ class GitHubAgent(BaseAgent):
             writer = None
 
         try:
+            if self._is_delete_repo_request(query):
+                if not self.token:
+                    return self.failure(
+                        "Os dados da sua conta vinculada não foram fornecidos no contexto desta sessão."
+                    )
+                return await self._delete_repository(query, writer)
+
             if self._is_create_repo_request(query):
                 if not self.token:
                     return self.failure(
@@ -92,6 +99,15 @@ class GitHubAgent(BaseAgent):
             )
         )
 
+    def _is_delete_repo_request(self, query: str) -> bool:
+        q = query.lower()
+        return any(
+            phrase in q
+            for phrase in (
+                "delete", "deletar", "remover repositório", "remova repositório", "apagar repositório", "delete repo", "delete repository"
+            )
+        )
+
     async def _create_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
         name = self._extract_repo_name_hint(query)
         if not name:
@@ -113,6 +129,18 @@ class GitHubAgent(BaseAgent):
                     "html_url": result.get("html_url"),
                 }
             )
+        except Exception as exc:
+            return self.failure(str(exc))
+
+    async def _delete_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
+        name = self._extract_repo_name_hint(query)
+        if not name:
+            return self.failure("Nome do repositório não identificado.")
+
+        owner = self.github_username
+        try:
+            await writer.delete_repo(owner=owner, repo=name)
+            return self.success({"repo": f"{owner}/{name}", "deleted": True})
         except Exception as exc:
             return self.failure(str(exc))
 

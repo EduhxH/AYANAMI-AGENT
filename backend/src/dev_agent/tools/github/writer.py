@@ -32,7 +32,7 @@ class GitHubWriter:
 
         payload = {
             "name": name,
-            "private": private,
+            "private": bool(private),
             "auto_init": auto_init,
         }
         if description:
@@ -51,3 +51,26 @@ class GitHubWriter:
                     f"Erro ao criar repositório: {response.status_code} — {content.get('message', response.text)}"
                 )
             return content
+
+    async def delete_repo(self, owner: Optional[str], repo: str) -> None:
+        if not repo:
+            raise ValueError("Nome do repositório não fornecido.")
+
+        owner = owner or self.github_username
+        if not owner:
+            raise ValueError(
+                "Os dados da sua conta vinculada não foram fornecidos no contexto desta sessão."
+            )
+
+        url = f"{self.BASE_URL}/repos/{owner}/{repo}"
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(url, headers=self.headers)
+            if response.status_code != 204:
+                content = None
+                try:
+                    content = response.json()
+                except ValueError:
+                    content = {"message": response.text}
+                raise ValueError(
+                    f"Erro ao deletar repositório: {response.status_code} — {content.get('message', response.text)}"
+                )
