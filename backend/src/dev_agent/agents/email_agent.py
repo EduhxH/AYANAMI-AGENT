@@ -61,11 +61,13 @@ Output format:
 
 Rules:
 - "send"  → The user explicitly and imperatively wants to transmit/dispatch/deliver an email RIGHT NOW (e.g., "envie", "enviar", "mande para", "dispare"). It MUST have a clear recipient email address and a final text body.
+  - Explicit dispatch phrasing like "envie esta sugestão", "podes enviar o rascunho", "manda o rascunho", "dispare isso", or "envia isto" is always "send".
 - "draft" → The user wants to compose, write, suggest, or generate a response text, proposal, or draft (e.g., "gere uma proposta", "escreva uma resposta", "sugira um texto", "crie um rascunho"). Even if a recipient email is present in the prompt, if the action verbs are about "generating/suggesting/writing/proposing", it is ALWAYS a "draft", NOT a "send".
 - "read"  → The user wants to read, view, list, search, or analyse their inbox.
 
 Crucial Instruction:
-If the user uses words like "proposta", "sugestão", "rascunho", "draft", "escreva uma resposta" or "como responder", the intent is STRICTLY "draft". Do NOT classify as "send" unless the user gives a direct command to dispatch the message immediately.
+If the user uses words like "proposta", "sugestão", "rascunho", "draft", "escreva uma resposta" or "como responder", the intent is STRICTLY "draft" unless the user gives a direct command to dispatch the message immediately.
+If the user asks to send but the recipient or body are not explicit in the current query, return null for those fields and include reasoning that the agent should infer the last referenced email from session context or ask the user to confirm the missing recipient/body. Do not invent placeholder addresses or reply with a generic example command.
 
 Respond with ONLY the JSON object — no markdown, no extra text.
 """
@@ -139,28 +141,43 @@ class EmailAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _handle_send(self, intent: EmailIntent) -> AgentResult:
-        if not intent.recipient:
+        recipient = intent.recipient
+        if not recipient:
+            try:
+                reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
+                emails = await reader.get_recent_emails(max_results=15)
+                if emails:
+                    candidate = self._pick_most_relevant(intent.reasoning or "", emails)
+                    inferred = self._extract_email_address(candidate.get("from", ""))
+                    if inferred:
+                        recipient = inferred
+                        logger.debug("Inferido destinatário do email recente: %s", inferred)
+            except Exception as exc:
+                logger.debug("Não foi possível inferir destinatário: %s", exc)
+
+        if not recipient:
             return self.failure(
-                "Não consegui identificar o destinatário. "
-                "Inclui o endereço de email no pedido (ex: 'Envia para user@example.com: ...')."
+                "Não consegui identificar um destinatário claro. "
+                "Confirma o destinatário ou inclui um email de destino no pedido."
             )
+
         body = (intent.body or "").strip()
         if len(body) < 3:
             return self.failure(
-                "Corpo do email muito curto ou vazio. "
-                "Fornece o texto que queres enviar."
+                "Não encontrei o texto do email para enviar. "
+                "Fornece o corpo da mensagem ou confirma o rascunho que deve ser enviado."
             )
 
         try:
             sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
             result = await sender.send_email(
-                to=intent.recipient,
+                to=recipient,
                 subject=intent.subject or "Sem assunto",
                 body=body,
             )
             return self.success({
                 "action": "send",
-                "recipient": intent.recipient,
+                "recipient": recipient,
                 "subject": intent.subject,
                 "body_preview": body[:150],
                 "result": result,
@@ -170,18 +187,18 @@ class EmailAgent(BaseAgent):
             return self.failure(f"Erro ao enviar email: {exc}")
 
     async def _handle_draft(self, query: str, intent: EmailIntent) -> AgentResult:
-        # Só ignoramos a leitura da Inbox se o utilizador forneceu um corpo de email explícito e extenso para rascunho
-        # Se contiver comandos de geração de proposta, forçamos a busca do contexto da Inbox.
         q_low = query.lower()
         has_explicit_body = intent.body and len(intent.body.strip()) > 40
-        is_requesting_generation = "ger" in q_low or "prop" in q_low or "resp" in q_low or "escrev" in q_low
+        is_requesting_generation = bool(
+            re.search(r"\b(ger(ar|e|ando)|proposta|sugest(ão|ao)|rascunho|draft|resposta|como responder|escreva|escrever|sugira|sugerir)\b", q_low)
+        )
 
         if has_explicit_body and not is_requesting_generation:
             return self.success({
                 "action": "draft",
                 "proposed_response": intent.body.strip(),
                 "instructions": (
-                    "Sugestão gerada. Usa 'Envia para user@example.com: [texto]' para enviar."
+                    "Sugestão gerada. Para enviar este texto, confirma o destinatário e o corpo no próximo pedido."
                 ),
             })
 
@@ -193,7 +210,7 @@ class EmailAgent(BaseAgent):
             return self.failure(f"Erro ao aceder ao Gmail: {exc}")
 
         if not emails:
-            return self.failure("Não há emails recentes para usar como contexto.")
+            return self.failure("Não há emails recentes na inbox para usar como contexto.")
 
         context_email = self._pick_most_relevant(query, emails)
         draft_text = await self._generate_draft(query, context_email)
@@ -204,7 +221,7 @@ class EmailAgent(BaseAgent):
             "context_subject": context_email.get("subject", "Sem assunto"),
             "proposed_response": draft_text,
             "instructions": (
-                "Sugestão de resposta. Usa 'Envia para user@example.com: [texto]' para enviar."
+                "Sugestão de resposta gerada. Para enviar, confirma o destinatário e o corpo no próximo pedido."
             ),
         })
 
@@ -249,6 +266,12 @@ class EmailAgent(BaseAgent):
                 best, best_score = email, score
 
         return best
+
+    def _extract_email_address(self, text: str) -> Optional[str]:
+        if not text:
+            return None
+        match = re.search(r"[\w.+-]+@[\w-]+\.\w+", text)
+        return match.group(0) if match else None
 
     async def _summarise_relevant(self, query: str, emails: list[dict]) -> str:
         listing = "\n".join(
