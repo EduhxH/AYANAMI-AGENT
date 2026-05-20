@@ -177,7 +177,7 @@ def _patch_orchestrator_summary() -> None:
 
     _original_summary = Orchestrator._generate_summary
 
-    async def generate_summary_extended(self, query: str, results: List[AgentResult]) -> str:
+    async def generate_summary_extended(self, query: str, results: List[AgentResult], history=None) -> str:
         if _is_general_only_success(results):
             return results[0].data.get("answer", "")
 
@@ -191,7 +191,7 @@ def _patch_orchestrator_summary() -> None:
             if all(not r.success for r in others):
                 return general.data.get("answer", "")
 
-        return await _original_summary(self, query, results)
+        return await _original_summary(self, query, results, history=history)
 
     Orchestrator._generate_summary = generate_summary_extended
     Orchestrator._general_summary_patch_installed = True

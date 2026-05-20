@@ -383,6 +383,33 @@ def test_chat_memory_logic():
                 assert "Como me chamo?" in called_messages_hook[4]["content"]
                 
                 print("[OK] Hooks instalados com sucesso, a repassar historico de mensagens e preamble!")
+
+                # Test 5: Verificar se o Orchestrator funciona com as Extension Patches instaladas
+                from dev_agent.extensions.install import install_agent_extensions
+                
+                install_agent_extensions()
+                
+                create_mock.reset_mock()
+                
+                result_ext = await orchestrator.handle(task, user_data, history=fake_history)
+                assert result_ext.summary == "Claro que sim! Chamas-te Joao."
+                assert create_mock.called
+                
+                called_kwargs_ext = create_mock.call_args[1]
+                called_messages_ext = called_kwargs_ext["messages"]
+                
+                assert len(called_messages_ext) == 5
+                assert called_messages_ext[0]["role"] == "system"
+                assert called_messages_ext[0]["content"] == "fake_preamble"
+                assert called_messages_ext[1]["role"] == "user"
+                assert called_messages_ext[1]["content"] == "Ola, recordas-te de mim?"
+                assert called_messages_ext[2]["role"] == "assistant"
+                assert called_messages_ext[2]["content"] == "Sim, ola! Qual e o teu nome?"
+                assert called_messages_ext[3]["role"] == "user"
+                assert called_messages_ext[3]["content"] == "Chamo-me Joao."
+                assert "Como me chamo?" in called_messages_ext[4]["content"]
+                
+                print("[OK] Extension patches instaladas com sucesso, a repassar historico pela cadeia de wrappers!")
                 return True
 
     try:
