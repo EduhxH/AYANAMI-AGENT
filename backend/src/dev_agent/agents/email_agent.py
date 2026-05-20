@@ -85,9 +85,12 @@ class EmailAgent(BaseAgent):
         self,
         token: str | None,
         on_token_refresh: Optional[TokenRefreshCallback] = None,
+        github_repositories: Optional[list] = None,
     ) -> None:
         self.token = token
         self.on_token_refresh = on_token_refresh
+        # Optional context injected by the Orchestrator/Dispatcher
+        self.github_repositories = github_repositories
         self.settings = get_settings()
         self.client = AsyncGroq(api_key=self.settings.groq_api_key)
 
@@ -144,18 +147,36 @@ class EmailAgent(BaseAgent):
     async def _handle_send(self, intent: EmailIntent, query: Optional[str] = None) -> AgentResult:
         recipient = intent.recipient
         selected_email = None
+        # Detectar se a query é sobre GitHub/repositórios e se existe contexto injetado
+        query_text = query or ""
+        is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query_text, re.IGNORECASE))
+        injected_repos = getattr(self, "github_repositories", None)
 
-        # Verificar se precisamos de consultar o histórico de emails recente
-        needs_history = (
-            not recipient or 
-            not intent.subject or 
-            intent.subject.strip() == "" or 
-            intent.subject.strip().lower() == "sem assunto" or 
-            not intent.body or 
-            len(intent.body.strip()) < 3
-        )
+        # Quando em modo GitHub, a Inbox NUNCA deve ser usada para extrair assunto ou tópicos.
+        # A Inbox só pode ser consultada para resolver explicitamente o endereço do destinatário
+        # e apenas se o utilizador mencionar "Eduardo Carvalho" na query.
 
-        if needs_history:
+        # Determinar se precisamos de consultar a inbox APENAS para o destinatário
+        needs_recipient_from_inbox = False
+        if not recipient:
+            if is_github_query:
+                if re.search(r"\beduardo\b.*\bcarvalho\b|\bcarvalho\b.*\beduardo\b", query_text, re.IGNORECASE):
+                    needs_recipient_from_inbox = True
+            else:
+                needs_recipient_from_inbox = True
+
+        # Determinar se precisamos de histórico para assunto/corpo (NÃO permitido em modo GitHub)
+        needs_history_for_body = False
+        if not is_github_query:
+            needs_history_for_body = (
+                not intent.subject or
+                intent.subject.strip() == "" or
+                intent.subject.strip().lower() == "sem assunto" or
+                not intent.body or
+                len((intent.body or "").strip()) < 3
+            )
+
+        if needs_recipient_from_inbox or needs_history_for_body:
             try:
                 reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
                 emails = await reader.get_recent_emails(max_results=15)
@@ -187,37 +208,51 @@ class EmailAgent(BaseAgent):
                            any(pattern in subject_field for pattern in ["delivery status", "failure notice", "undeliverable"]):
                             continue
                         filtered_emails.append(e)
-                    
-                    if filtered_emails:
-                        # 1. Tentar mapear pelo nome do remetente se mencionado na query
+
+                    if filtered_emails and needs_recipient_from_inbox:
                         matched_email = None
                         if query and not recipient:
                             query_lower = query.lower()
                             for e in filtered_emails:
                                 from_val = e.get("from") or ""
                                 display_name = from_val.split("<")[0].replace('"', '').strip() if "<" in from_val else from_val.replace('"', '').strip()
-                                
-                                if len(display_name) >= 3:
-                                    name_tokens = [t.lower() for t in display_name.split() if len(t) >= 3]
-                                    if name_tokens and all(token in query_lower for token in name_tokens):
-                                        email_addr = self._extract_email_address(from_val)
-                                        if email_addr and is_valid_human_domain(email_addr):
-                                            matched_email = e
-                                            break
-                        
+                                # Só permitir mapping de nome se for explicitamente o contacto 'Eduardo Carvalho'
+                                if re.search(r"\beduardo\b", display_name, re.IGNORECASE) and re.search(r"\bcarvalho\b", display_name, re.IGNORECASE):
+                                    email_addr = self._extract_email_address(from_val)
+                                    if email_addr and is_valid_human_domain(email_addr):
+                                        matched_email = e
+                                        break
+
                         if matched_email:
                             selected_email = matched_email
                             recipient = self._extract_email_address(selected_email.get("from", ""))
-                            logger.debug("Mapeado destinatário por correspondência de nome: %s", recipient)
+                            logger.debug("Mapeado destinatário por correspondência de nome (Eduardo Carvalho): %s", recipient)
                         else:
-                            # 2. Se não encontrou por nome ou não tem recipient, tenta o mais recente e-mail humano elegível
+                            # Em modo não-GitHub podemos ainda inferir o mais recente humano elegível
+                            if not is_github_query:
+                                for e in filtered_emails:
+                                    email_addr = self._extract_email_address(e.get("from", ""))
+                                    if email_addr and is_valid_human_domain(email_addr):
+                                        selected_email = e
+                                        if not recipient:
+                                            recipient = email_addr
+                                            logger.debug("Inferido destinatário humano recente: %s", recipient)
+                                        break
+                    # Se precisamos de histórico para gerar corpo e ainda não temos selected_email,
+                    # tentamos escolher o email mais relevante para regenerar o corpo.
+                    if filtered_emails and needs_history_for_body and selected_email is None:
+                        try:
+                            # Prefer a email that melhor corresponde à query
+                            selected_email = self._pick_most_relevant(query or "", filtered_emails)
+                        except Exception:
+                            selected_email = None
+
+                        if selected_email is None:
+                            # Fallback: escolhe o primeiro email humano elegível
                             for e in filtered_emails:
                                 email_addr = self._extract_email_address(e.get("from", ""))
                                 if email_addr and is_valid_human_domain(email_addr):
                                     selected_email = e
-                                    if not recipient:
-                                        recipient = email_addr
-                                        logger.debug("Inferido destinatário humano recente: %s", recipient)
                                     break
             except Exception as exc:
                 logger.debug("Não foi possível aceder ao histórico de emails: %s", exc)
@@ -227,34 +262,43 @@ class EmailAgent(BaseAgent):
                 "Não consegui identificar um destinatário claro. "
                 "Confirma o destinatário ou inclui um email de destino no pedido."
             )
-
-        subject = intent.subject
-        if not subject or subject.strip() == "" or subject.strip().lower() == "sem assunto":
-            if selected_email:
-                orig_subject = selected_email.get("subject") or "Sem assunto"
-                if orig_subject.lower().startswith("re:"):
-                    subject = orig_subject
-                else:
-                    subject = f"Re: {orig_subject}"
-            else:
-                subject = "Sem assunto"
-
-        body = (intent.body or "").strip()
-        if len(body) < 3:
-            if selected_email:
-                try:
-                    logger.debug("Corpo ausente. A regenerar corpo usando LLM.")
-                    body = await self._regenerate_body(query or intent.reasoning or "", selected_email)
-                    body = body.strip()
-                except Exception as exc:
-                    logger.exception("Erro ao regenerar corpo do email")
-                    return self.failure(f"Erro ao gerar corpo do email: {exc}")
-
-        if len(body) < 3:
-            return self.failure(
-                "Não encontrei o texto do email para enviar. "
-                "Fornece o corpo da mensagem ou confirma o rascunho que deve ser enviado."
+        # Se for um pedido relacionado com GitHub e tivermos repositórios injetados, USE-OS como única fonte de verdade para o corpo
+        if is_github_query and injected_repos:
+            subject = intent.subject or f"Resumo dos repositórios ({len(injected_repos)})"
+            # Gerar corpo determinístico a partir da lista de repositórios — sem recorrer à Inbox
+            repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
+            body = (
+                f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
+                "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
             )
+        else:
+            subject = intent.subject
+            if not subject or subject.strip() == "" or subject.strip().lower() == "sem assunto":
+                if selected_email:
+                    orig_subject = selected_email.get("subject") or "Sem assunto"
+                    if orig_subject.lower().startswith("re:"):
+                        subject = orig_subject
+                    else:
+                        subject = f"Re: {orig_subject}"
+                else:
+                    subject = "Sem assunto"
+
+            body = (intent.body or "").strip()
+            if len(body) < 3:
+                if selected_email:
+                    try:
+                        logger.debug("Corpo ausente. A regenerar corpo usando LLM.")
+                        body = await self._regenerate_body(query or intent.reasoning or "", selected_email)
+                        body = body.strip()
+                    except Exception as exc:
+                        logger.exception("Erro ao regenerar corpo do email")
+                        return self.failure(f"Erro ao gerar corpo do email: {exc}")
+
+            if len(body) < 3:
+                return self.failure(
+                    "Não encontrei o texto do email para enviar. "
+                    "Fornece o corpo da mensagem ou confirma o rascunho que deve ser enviado."
+                )
 
         try:
             sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
@@ -280,13 +324,31 @@ class EmailAgent(BaseAgent):
         is_requesting_generation = bool(
             re.search(r"\b(ger(ar|e|ando)|proposta|sugest(ão|ao)|rascunho|draft|resposta|como responder|escreva|escrever|sugira|sugerir)\b", q_low)
         )
-
         if has_explicit_body and not is_requesting_generation:
             return self.success({
                 "action": "draft",
                 "proposed_response": intent.body.strip(),
                 "instructions": (
                     "Sugestão gerada. Para enviar este texto, confirma o destinatário e o corpo no próximo pedido."
+                ),
+            })
+
+        # Se estivermos em modo GitHub com repositórios injetados, gere um rascunho baseado EXCLUSIVAMENTE nessa lista
+        injected_repos = getattr(self, "github_repositories", None)
+        is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query, re.IGNORECASE))
+        if is_github_query and injected_repos:
+            repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
+            draft_text = (
+                f"Segue uma proposta de email com base na lista de repositórios fornecida:\n\n{repos_list_text}\n\n"
+                "Nota: este rascunho foi gerado apenas a partir dos repositórios providenciados pelo GitHubAgent; nenhuma informação da inbox foi utilizada."
+            )
+            return self.success({
+                "action": "draft",
+                "context_from": "GitHubAgent",
+                "context_subject": f"Resumo de {len(injected_repos)} repositórios",
+                "proposed_response": draft_text,
+                "instructions": (
+                    "Sugestão gerada a partir dos repositórios; para enviar, confirma o destinatário e o corpo no próximo pedido."
                 ),
             })
 
