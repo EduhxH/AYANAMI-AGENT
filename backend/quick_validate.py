@@ -202,6 +202,43 @@ def test_email_agent_logic():
             assert res3.success is True, f"Failed test 3: {res3.error}"
             assert "Mocked regenerated body" in res3.data["body_preview"], f"Body preview doesn't contain regenerated text: {res3.data['body_preview']}"
             
+            # TEST 4: EmailIntent Pydantic validation checks
+            from pydantic import ValidationError
+            
+            # A valid email recipient should pass validation
+            intent_ok = EmailIntent(
+                intent="send",
+                recipient="eduardo@example.com",
+                subject="Hi",
+                body="Body",
+                reasoning="OK"
+            )
+            assert intent_ok.recipient == "eduardo@example.com"
+ 
+            # An empty/null recipient should pass validation (fallback to infer/real user)
+            intent_null = EmailIntent(
+                intent="send",
+                recipient=None,
+                subject="Hi",
+                body="Body",
+                reasoning="OK"
+            )
+            assert intent_null.recipient is None
+ 
+            # A name string recipient (non-email) should raise validation error
+            try:
+                EmailIntent(
+                    intent="send",
+                    recipient="Eduardo Carvalho",
+                    subject="Hi",
+                    body="Body",
+                    reasoning="Should Fail"
+                )
+                assert False, "Expected ValidationError for non-email recipient 'Eduardo Carvalho', but it passed."
+            except (ValueError, ValidationError) as val_err:
+                # Success: validation error raised as expected
+                pass
+            
             print("[OK] Todos os testes logicos do EmailAgent passaram!")
             return True
 

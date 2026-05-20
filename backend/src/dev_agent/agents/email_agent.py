@@ -66,8 +66,9 @@ Rules:
 - "read"  → The user wants to read, view, list, search, or analyse their inbox.
 
 Crucial Instruction:
-If the user uses words like "proposta", "sugestão", "rascunho", "draft", "escreva uma resposta" or "como responder", the intent is STRICTLY "draft" unless the user gives a direct command to dispatch the message immediately.
-If the user asks to send but the recipient or body are not explicit in the current query, return null for those fields and include reasoning that the agent should infer the last referenced email from session context or ask the user to confirm the missing recipient/body. Do not invent placeholder addresses or reply with a generic example command.
+- The 'recipient' field MUST contain only a valid structured email address (containing '@' and a domain). If the user provides only a name (e.g., "Eduardo Carvalho") or references like "him", "her", or "ele", leave the 'recipient' field strictly as null or empty (O campo 'recipient' DEVE conter apenas um endereço de e-mail estruturado válido com '@' e domínio. Se o utilizador fornecer apenas um nome próprio ou referências como 'ele', deixa o campo 'recipient' estritamente como null ou vazio).
+- If the user uses words like "proposta", "sugestão", "rascunho", "draft", "escreva uma resposta" or "como responder", the intent is STRICTLY "draft" unless the user gives a direct command to dispatch the message immediately.
+- If the user asks to send but the recipient or body are not explicit in the current query, return null for those fields and include reasoning that the agent should infer the last referenced email from session context or ask the user to confirm the missing recipient/body. Do not invent placeholder addresses or reply with a generic example command.
 
 Respond with ONLY the JSON object — no markdown, no extra text.
 """
