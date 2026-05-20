@@ -160,20 +160,65 @@ class EmailAgent(BaseAgent):
                 reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
                 emails = await reader.get_recent_emails(max_results=15)
                 if emails:
-                    ignored_patterns = ["no-reply", "noreply", "render.com", "github.com", "uber.com"]
+                    ignored_patterns = [
+                        "no-reply", "noreply", "render.com", "github.com", "uber.com",
+                        "mailer-daemon", "notification", "bounce", "support", "alert"
+                    ]
+                    
+                    def is_valid_human_domain(email_addr: str) -> bool:
+                        if not email_addr:
+                            return False
+                        parts = email_addr.split("@")
+                        if len(parts) != 2:
+                            return False
+                        domain = parts[1].lower()
+                        rejected_keywords = [
+                            "reply", "notification", "daemon", "bounce", "alert", "system", 
+                            "support", "info", "news", "newsletter", "marketing", "billing",
+                            "bot", "no-reply", "noreply", "service", "automated", "status"
+                        ]
+                        return not any(keyword in domain for keyword in rejected_keywords)
+
                     filtered_emails = []
                     for e in emails:
                         from_field = (e.get("from") or "").lower()
-                        if not any(pattern in from_field for pattern in ignored_patterns):
-                            filtered_emails.append(e)
+                        subject_field = (e.get("subject") or "").lower()
+                        if any(pattern in from_field for pattern in ignored_patterns) or \
+                           any(pattern in subject_field for pattern in ["delivery status", "failure notice", "undeliverable"]):
+                            continue
+                        filtered_emails.append(e)
                     
                     if filtered_emails:
-                        selected_email = filtered_emails[0]
-                        if not recipient:
-                            inferred = self._extract_email_address(selected_email.get("from", ""))
-                            if inferred:
-                                recipient = inferred
-                                logger.debug("Inferido destinatário do email recente: %s", inferred)
+                        # 1. Tentar mapear pelo nome do remetente se mencionado na query
+                        matched_email = None
+                        if query and not recipient:
+                            query_lower = query.lower()
+                            for e in filtered_emails:
+                                from_val = e.get("from") or ""
+                                display_name = from_val.split("<")[0].replace('"', '').strip() if "<" in from_val else from_val.replace('"', '').strip()
+                                
+                                if len(display_name) >= 3:
+                                    name_tokens = [t.lower() for t in display_name.split() if len(t) >= 3]
+                                    if name_tokens and all(token in query_lower for token in name_tokens):
+                                        email_addr = self._extract_email_address(from_val)
+                                        if email_addr and is_valid_human_domain(email_addr):
+                                            matched_email = e
+                                            break
+                        
+                        if matched_email:
+                            selected_email = matched_email
+                            recipient = self._extract_email_address(selected_email.get("from", ""))
+                            logger.debug("Mapeado destinatário por correspondência de nome: %s", recipient)
+                        else:
+                            # 2. Se não encontrou por nome ou não tem recipient, tenta o mais recente e-mail humano elegível
+                            for e in filtered_emails:
+                                email_addr = self._extract_email_address(e.get("from", ""))
+                                if email_addr and is_valid_human_domain(email_addr):
+                                    selected_email = e
+                                    if not recipient:
+                                        recipient = email_addr
+                                        logger.debug("Inferido destinatário humano recente: %s", recipient)
+                                    break
             except Exception as exc:
                 logger.debug("Não foi possível aceder ao histórico de emails: %s", exc)
 

@@ -239,6 +239,30 @@ def test_email_agent_logic():
                 # Success: validation error raised as expected
                 pass
             
+            # TEST 5: Extract email address by name query matching and filtering out system/bot domains
+            mock_emails_ext = [
+                {"id": "1", "from": "Eduardo Carvalho <no-reply@render.com>", "subject": "Delivery Status Notification (Failure)", "snippet": "Failed to deliver"},
+                {"id": "2", "from": "System Daemon <mailer-daemon@gmail.com>", "subject": "Failure Notice", "snippet": "Undeliverable"},
+                {"id": "3", "from": "Eduardo Carvalho <eduardo.carvalho@gmail.com>", "subject": "Re: Proposta", "snippet": "Aqui está a proposta"},
+                {"id": "4", "from": "John Doe <john.doe@example.com>", "subject": "Hello Friend", "snippet": "How are you?"},
+            ]
+            mock_reader.get_recent_emails.return_value = mock_emails_ext
+            
+            intent5 = EmailIntent(
+                intent="send",
+                recipient=None,
+                subject="Hello",
+                body="Body context",
+                reasoning="Send to Eduardo"
+            )
+            
+            res5 = await agent._handle_send(intent5, query="Envie um email para o Eduardo Carvalho")
+            assert res5.success is True, f"Failed test 5: {res5.error}"
+            assert res5.data["recipient"] == "eduardo.carvalho@gmail.com", f"Expected eduardo.carvalho@gmail.com, got {res5.data['recipient']}"
+            
+            # Restore default mock emails
+            mock_reader.get_recent_emails.return_value = mock_emails
+            
             print("[OK] Todos os testes logicos do EmailAgent passaram!")
             return True
 
