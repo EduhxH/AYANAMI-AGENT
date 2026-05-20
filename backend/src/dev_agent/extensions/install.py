@@ -52,7 +52,7 @@ Pedido: "{query}"
 
 Agentes:
 - "github": código, repositórios, PRs, commits (requer repo/GitHub explícito)
-- "email": ler/resumir Gmail (requer email explícito)
+- "email": para ler/resumir Gmail, redigir ou enviar emails, draft/rascunhos e sugestões de resposta (requer email ou intenção de mensagem explícita)
 - "anime": APENAS se pedir recomendações de anime
 - "general": conversa geral, saudações, factos, tutoriais, pesquisa, opiniões, "o que é", "como funciona", qualquer coisa SEM GitHub/Gmail
 
@@ -98,11 +98,16 @@ def _sanitize_agents(agents: List[AgentType], query: str) -> List[AgentType]:
         return agents
 
     github_signals = ("github.com", "owner/", "pull request", "pr #", "commit")
-    email_signals = ("gmail", "email", "e-mail", "inbox", "correio")
+    email_signals = ("gmail", "email", "e-mail", "inbox", "correio", "mensagem", "mail")
+    email_actions = ("responda", "responder", "responde", "envie", "enviar", "mande", "mandar", "envio", "escreva", "escrever")
+    email_objects = ("rascunho", "draft", "sugestão", "sugestao", "resposta", "mensagem")
 
     wants_github = any(s in q for s in ("repo", "repositório", "repositorio", "código", "codigo", "pr ", "github"))
     wants_github = wants_github or any(s in q for s in github_signals)
-    wants_email = any(s in q for s in email_signals)
+    wants_email = any(s in q for s in email_signals) or (
+        any(s in q for s in email_actions)
+        and any(s in q for s in email_objects)
+    )
 
     if AgentType.GITHUB in agents and not wants_github:
         agents = [a for a in agents if a != AgentType.GITHUB]
@@ -136,7 +141,12 @@ def _keyword_fallback(query: str) -> List[AgentType]:
         return [AgentType.GITHUB]
     if any(
         w in q
-        for w in ("gmail", "email", "inbox", "correio", "mensagem", "responde")
+        for w in ("gmail", "email", "e-mail", "inbox", "correio", "mensagem", "mail")
+    ):
+        return [AgentType.EMAIL]
+    if any(w in q for w in ("envie", "enviar", "mande", "mandar", "envio")) and any(
+        w in q
+        for w in ("rascunho", "draft", "sugestão", "sugestao", "resposta", "mensagem", "sugestão de email", "sugestao de email")
     ):
         return [AgentType.EMAIL]
     return [AgentType.GENERAL]

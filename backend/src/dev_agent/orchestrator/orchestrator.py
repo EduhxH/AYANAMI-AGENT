@@ -23,6 +23,11 @@ class Orchestrator:
         print(f"[ORCHESTRATOR] user_data: user_id={user_data.get('user_id')}, github_token={'***' if user_data.get('github_token') else 'NULL'}, github_username={user_data.get('github_username')}")
         
         agents = request.agents or await self.planner.decide_agents(request.query)
+        if self._is_email_intent(request.query):
+            agents = [a for a in agents if a != AgentType.GENERAL]
+            if AgentType.EMAIL not in agents:
+                agents.append(AgentType.EMAIL)
+            print("[ORCHESTRATOR] Email intent detectada, garantindo AgentType.EMAIL")
         print(f"[ORCHESTRATOR] Agentes a executar: {[a.value for a in agents]}")
 
         dispatcher = Dispatcher(user_data, self.on_google_token_refresh)
@@ -77,3 +82,38 @@ Escreve em português, de forma directa, técnica e sem especulações.
         if data.get("repo_context_text"):
             return f"Agente {result.agent}: Sucesso — Contexto do repositório:\n{data['repo_context_text']}"
         return f"Agente {result.agent}: Sucesso — {json.dumps(data, ensure_ascii=False, indent=2)}"
+
+    def _is_email_intent(self, query: str) -> bool:
+        q = query.lower()
+        email_terms = (
+            "email",
+            "e-mail",
+            "gmail",
+            "inbox",
+            "correio",
+            "mensagem",
+            "mail",
+            "rascunho",
+            "draft",
+            "sugestão",
+            "sugestao",
+            "resposta",
+        )
+        email_actions = (
+            "responda",
+            "responder",
+            "responde",
+            "envie",
+            "enviar",
+            "mande",
+            "mandar",
+            "envio",
+            "escreva",
+            "escrever",
+        )
+
+        if any(term in q for term in email_terms):
+            return True
+        if any(action in q for action in email_actions) and any(term in q for term in ("rascunho", "draft", "sugestão", "sugestao", "sugestão de email", "sugestao de email", "resposta", "mensagem", "sugestão")):
+            return True
+        return False

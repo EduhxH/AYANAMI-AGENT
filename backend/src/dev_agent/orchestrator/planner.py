@@ -27,7 +27,7 @@ class Planner:
         
         Agentes disponíveis:
         - "github": para analisar código, repos, criar PRs, ver commits, resumir projetos, inspecionar README, analisar package.json/requirements.txt/pyproject.toml/Dockerfile e trabalhar com repositórios GitHub.
-        - "email": para ler emails, responder, enviar, escrever, classificar, gerar propostas de resposta
+        - "email": para ler emails, responder, enviar, escrever, classificar, gerar propostas de resposta, drafts/rascunhos, sugestões de email e envio de mensagens
         - "anime": apenas se o utilizador pedir recomendações de anime (easter egg)
         
         Usa o agente "github" sempre que o pedido envolver qualquer tipo de análise ou resumo de repositório, README, stars, commits, package.json, requirements.txt, pyproject.toml, Dockerfile, main.py, index.js, app.py ou menção de um repositório específico como "AYANAMI-AGENT".
@@ -36,7 +36,8 @@ class Planner:
         - Ler, buscar, ou analisar emails
         - Responder a emails (palavras como "responda", "responde", "responder", "reply")
         - Enviar emails (palavras como "envie", "enviar", "mande", "mandar", "envio")
-        - Escrever emails ou propostas de resposta (palavras como "escreva", "escrever", "gere uma resposta", "gere uma proposta", "draft", "rascunho")
+        - Escrever emails, rascunhos ou propostas de resposta (palavras como "escreva", "escrever", "gere uma resposta", "gere uma proposta", "draft", "rascunho", "sugestão", "sugestao")
+        - Enviar mensagens ou rascunhos de email (palavras como "envie", "enviar", "mande", "mandar", "envio")
         - Classificar ou organizar emails
         - Qualquer operação de Gmail/correio
         
@@ -77,7 +78,7 @@ class Planner:
             if any(word in query_lower for word in [
                 "email", "gmail", "mensagem", "responde", "responder", "envie", "enviar", 
                 "mande", "mandar", "escreva", "escrever", "gere uma resposta", "gere uma proposta",
-                "resposta", "envio", "compose", "rascunho", "draft", "correio"
+                "resposta", "envio", "compose", "rascunho", "draft", "correio", "sugestão", "sugestao"
             ]):
                 agents.append(AgentType.EMAIL)
             
