@@ -228,6 +228,8 @@ def test_chat_memory_logic():
 
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
+    import dev_agent.database.repositories.users
+    import dev_agent.database.repositories.user_preferences
     from dev_agent.database.models.chat_message import ChatMessage
     from dev_agent.database.repositories.chat_messages import ChatMessagesRepository
     from dev_agent.orchestrator.orchestrator import Orchestrator
@@ -309,7 +311,13 @@ def test_chat_memory_logic():
             ]
             
             # Mock Dispatcher running and returning empty results (since it's a general intent)
-            with patch("dev_agent.orchestrator.orchestrator.Dispatcher") as mock_dispatcher_class:
+            with patch("dev_agent.orchestrator.orchestrator.Dispatcher") as mock_dispatcher_class, \
+                 patch("dev_agent.preferences.hooks.get_database", return_value=mock_db), \
+                 patch("dev_agent.database.repositories.users.UsersRepository") as mock_users_repo_class, \
+                 patch("dev_agent.preferences.hooks.UserPreferencesRepository") as mock_prefs_repo_class, \
+                 patch("dev_agent.preferences.hooks.build_agent_system_preamble", return_value="fake_preamble"), \
+                 patch("dev_agent.preferences.hooks.with_system_preamble", side_effect=lambda msgs: [{"role": "system", "content": "fake_preamble"}] + msgs):
+                
                 mock_dispatcher = mock_dispatcher_class.return_value
                 mock_dispatcher.run = AsyncMock(return_value=[])
                 
@@ -339,6 +347,42 @@ def test_chat_memory_logic():
                 assert "Como me chamo?" in called_messages[3]["content"]
                 
                 print("[OK] Orquestrador injetou historico estruturalmente nas chamadas do LLM!")
+
+                # Test 4: Verificar se o Orchestrator funciona com os Hooks de preferência instalados
+                from dev_agent.preferences.hooks import install_orchestrator_hooks
+                
+                mock_user = MagicMock()
+                mock_user.email = "joao@example.com"
+                
+                mock_users_repo = mock_users_repo_class.return_value
+                mock_users_repo.find_by_id = AsyncMock(return_value=mock_user)
+                
+                mock_prefs_repo = mock_prefs_repo_class.return_value
+                mock_prefs_repo.get_or_create = AsyncMock(return_value=MagicMock())
+                
+                install_orchestrator_hooks()
+                
+                create_mock.reset_mock()
+                
+                result_hook = await orchestrator.handle(task, user_data, history=fake_history)
+                assert result_hook.summary == "Claro que sim! Chamas-te Joao."
+                assert create_mock.called
+                
+                called_kwargs_hook = create_mock.call_args[1]
+                called_messages_hook = called_kwargs_hook["messages"]
+                
+                assert len(called_messages_hook) == 5
+                assert called_messages_hook[0]["role"] == "system"
+                assert called_messages_hook[0]["content"] == "fake_preamble"
+                assert called_messages_hook[1]["role"] == "user"
+                assert called_messages_hook[1]["content"] == "Ola, recordas-te de mim?"
+                assert called_messages_hook[2]["role"] == "assistant"
+                assert called_messages_hook[2]["content"] == "Sim, ola! Qual e o teu nome?"
+                assert called_messages_hook[3]["role"] == "user"
+                assert called_messages_hook[3]["content"] == "Chamo-me Joao."
+                assert "Como me chamo?" in called_messages_hook[4]["content"]
+                
+                print("[OK] Hooks instalados com sucesso, a repassar historico de mensagens e preamble!")
                 return True
 
     try:

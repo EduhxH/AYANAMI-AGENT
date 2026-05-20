@@ -20,7 +20,7 @@ def install_orchestrator_hooks() -> None:
     _original_handle = Orchestrator.handle
     _original_generate_summary = Orchestrator._generate_summary
 
-    async def handle_with_preferences(self, request, user_data):
+    async def handle_with_preferences(self, request, user_data, history=None):
         db = get_database()
         from dev_agent.database.repositories.users import UsersRepository
 
@@ -46,10 +46,10 @@ def install_orchestrator_hooks() -> None:
         preamble = build_agent_system_preamble(prefs, account_context=account_context)
         set_preamble(preamble)
         self._ayanami_system_preamble = preamble
-        return await _original_handle(self, request, user_data)
+        return await _original_handle(self, request, user_data, history=history)
 
     async def generate_summary_with_preferences(
-        self, query: str, results: List[AgentResult]
+        self, query: str, results: List[AgentResult], history=None
     ) -> str:
         lines = []
         for r in results:
@@ -60,11 +60,17 @@ def install_orchestrator_hooks() -> None:
 
         results_text = "\n".join(lines)
 
-        messages = with_system_preamble(
-            [
-                {
-                    "role": "user",
-                    "content": f"""
+        messages = []
+        if history:
+            for msg in reversed(history):
+                messages.append({
+                    "role": msg.get("role"),
+                    "content": msg.get("content")
+                })
+
+        messages.append({
+            "role": "user",
+            "content": f"""
 Pedido do utilizador: "{query}"
 
 Resultados dos agentes:
@@ -74,9 +80,9 @@ Cria uma resposta clara e útil para o utilizador com base nestes resultados.
 Escreve em português, de forma directa e técnica.
 Se houve erros, explica o que o utilizador deve fazer (ex: religar conta, activar API).
 """,
-                }
-            ]
-        )
+        })
+
+        messages = with_system_preamble(messages)
 
         response = await self.client.chat.completions.create(
             model=self.settings.groq_model,
