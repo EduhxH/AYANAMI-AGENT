@@ -19,6 +19,7 @@ async def connect_to_mongodb() -> None:
     await _db.users.create_index("verification_code")
     await _db.analyses.create_index("user_id")
     await _db.anime_suggestions.create_index("approved")
+    await _db.chat_messages.create_index([("user_id", 1), ("timestamp", -1)])
     
     print("MongoDB connected")
 

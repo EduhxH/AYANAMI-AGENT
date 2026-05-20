@@ -18,7 +18,7 @@ class Orchestrator:
         self.planner = Planner()
         self.on_google_token_refresh = on_google_token_refresh
 
-    async def handle(self, request: TaskRequest, user_data: dict) -> OrchestratorResult:
+    async def handle(self, request: TaskRequest, user_data: dict, history: Optional[List[dict]] = None) -> OrchestratorResult:
         print(f"[ORCHESTRATOR] Recebendo TaskRequest: query={request.query!r}, agents={request.agents}")
         print(f"[ORCHESTRATOR] user_data: user_id={user_data.get('user_id')}, github_token={'***' if user_data.get('github_token') else 'NULL'}, github_username={user_data.get('github_username')}")
         
@@ -36,7 +36,7 @@ class Orchestrator:
         results = await dispatcher.run(request.query, agents)
         print(f"[ORCHESTRATOR] Dispatcher completado com {len(results)} resultados")
 
-        summary = await self._generate_summary(request.query, results)
+        summary = await self._generate_summary(request.query, results, history)
         print(f"[ORCHESTRATOR] Summary gerado: {summary[:100]}...")
 
         return OrchestratorResult(
@@ -45,7 +45,7 @@ class Orchestrator:
             summary=summary,
         )
 
-    async def _generate_summary(self, query: str, results: List[AgentResult]) -> str:
+    async def _generate_summary(self, query: str, results: List[AgentResult], history: Optional[List[dict]] = None) -> str:
         lines = []
         for r in results:
             if r.success:
@@ -56,12 +56,17 @@ class Orchestrator:
 
         results_text = "\n\n".join(lines)
 
-        response = await self.client.chat.completions.create(
-            model=self.settings.groq_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"""
+        messages = []
+        if history:
+            for msg in reversed(history):
+                messages.append({
+                    "role": msg.get("role"),
+                    "content": msg.get("content")
+                })
+
+        messages.append({
+            "role": "user",
+            "content": f"""
 Pedido do utilizador: "{query}"
 
 Resultados dos agentes:
@@ -70,8 +75,11 @@ Resultados dos agentes:
 Baseia a resposta final nestes resultados, especialmente no contexto do repositório fornecido.
 Escreve em português, de forma directa, técnica e sem especulações.
 """,
-                }
-            ],
+        })
+
+        response = await self.client.chat.completions.create(
+            model=self.settings.groq_model,
+            messages=messages,
             temperature=0.7,
         )
 

@@ -106,7 +106,7 @@ class EmailAgent(BaseAgent):
 
         match intent.intent:
             case "send":
-                return await self._handle_send(intent)
+                return await self._handle_send(intent, query)
             case "draft":
                 return await self._handle_draft(query, intent)
             case "read":
@@ -140,20 +140,41 @@ class EmailAgent(BaseAgent):
     # Handlers
     # ------------------------------------------------------------------
 
-    async def _handle_send(self, intent: EmailIntent) -> AgentResult:
+    async def _handle_send(self, intent: EmailIntent, query: Optional[str] = None) -> AgentResult:
         recipient = intent.recipient
-        if not recipient:
+        selected_email = None
+
+        # Verificar se precisamos de consultar o histórico de emails recente
+        needs_history = (
+            not recipient or 
+            not intent.subject or 
+            intent.subject.strip() == "" or 
+            intent.subject.strip().lower() == "sem assunto" or 
+            not intent.body or 
+            len(intent.body.strip()) < 3
+        )
+
+        if needs_history:
             try:
                 reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
                 emails = await reader.get_recent_emails(max_results=15)
                 if emails:
-                    candidate = self._pick_most_relevant(intent.reasoning or "", emails)
-                    inferred = self._extract_email_address(candidate.get("from", ""))
-                    if inferred:
-                        recipient = inferred
-                        logger.debug("Inferido destinatário do email recente: %s", inferred)
+                    ignored_patterns = ["no-reply", "noreply", "render.com", "github.com", "uber.com"]
+                    filtered_emails = []
+                    for e in emails:
+                        from_field = (e.get("from") or "").lower()
+                        if not any(pattern in from_field for pattern in ignored_patterns):
+                            filtered_emails.append(e)
+                    
+                    if filtered_emails:
+                        selected_email = filtered_emails[0]
+                        if not recipient:
+                            inferred = self._extract_email_address(selected_email.get("from", ""))
+                            if inferred:
+                                recipient = inferred
+                                logger.debug("Inferido destinatário do email recente: %s", inferred)
             except Exception as exc:
-                logger.debug("Não foi possível inferir destinatário: %s", exc)
+                logger.debug("Não foi possível aceder ao histórico de emails: %s", exc)
 
         if not recipient:
             return self.failure(
@@ -161,7 +182,28 @@ class EmailAgent(BaseAgent):
                 "Confirma o destinatário ou inclui um email de destino no pedido."
             )
 
+        subject = intent.subject
+        if not subject or subject.strip() == "" or subject.strip().lower() == "sem assunto":
+            if selected_email:
+                orig_subject = selected_email.get("subject") or "Sem assunto"
+                if orig_subject.lower().startswith("re:"):
+                    subject = orig_subject
+                else:
+                    subject = f"Re: {orig_subject}"
+            else:
+                subject = "Sem assunto"
+
         body = (intent.body or "").strip()
+        if len(body) < 3:
+            if selected_email:
+                try:
+                    logger.debug("Corpo ausente. A regenerar corpo usando LLM.")
+                    body = await self._regenerate_body(query or intent.reasoning or "", selected_email)
+                    body = body.strip()
+                except Exception as exc:
+                    logger.exception("Erro ao regenerar corpo do email")
+                    return self.failure(f"Erro ao gerar corpo do email: {exc}")
+
         if len(body) < 3:
             return self.failure(
                 "Não encontrei o texto do email para enviar. "
@@ -172,13 +214,13 @@ class EmailAgent(BaseAgent):
             sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
             result = await sender.send_email(
                 to=recipient,
-                subject=intent.subject or "Sem assunto",
+                subject=subject,
                 body=body,
             )
             return self.success({
                 "action": "send",
                 "recipient": recipient,
-                "subject": intent.subject,
+                "subject": subject,
                 "body_preview": body[:150],
                 "result": result,
             })
@@ -328,3 +370,31 @@ class EmailAgent(BaseAgent):
             max_tokens=400,
         )
         return resp.choices[0].message.content or "Não foi possível gerar uma proposta."
+
+    async def _regenerate_body(self, query: str, context_email: dict) -> str:
+        prompt = (
+            f"EMAIL RECEBIDO\n"
+            f"De: {context_email.get('from', 'Desconhecido')}\n"
+            f"Assunto: {context_email.get('subject', 'Sem assunto')}\n"
+            f"Conteúdo: {context_email.get('snippet', '')}\n\n"
+            f"PEDIDO DO UTILIZADOR: {query}\n\n"
+            "Com base no email recebido e no pedido do utilizador, gera o corpo do email de resposta sugerido. "
+            "Devolve apenas o texto do corpo da mensagem de resposta pura, sem saudações redundantes, sem justificações extras, metadados ou assinaturas fictícias."
+        )
+        resp = await self.client.chat.completions.create(
+            model=self.settings.groq_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "És um assistente de email profissional. "
+                        "Geras respostas diretas e contextualizadas ao email recebido. "
+                        "Nunca inclua assinaturas automáticas corporativas ou notas adicionais."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=400,
+        )
+        return resp.choices[0].message.content or ""

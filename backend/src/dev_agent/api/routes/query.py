@@ -8,6 +8,7 @@ from dev_agent.api.dependencies import get_current_user
 from dev_agent.auth.google_tokens import ensure_fresh_google_token
 from dev_agent.database.connection import get_database
 from dev_agent.database.repositories.users import UsersRepository
+from dev_agent.database.repositories.chat_messages import ChatMessagesRepository
 
 router = APIRouter(prefix="/query", tags=["query"])
 
@@ -31,6 +32,7 @@ async def handle_query(
     print("=" * 80)
     
     users_repo = UsersRepository(db)
+    chat_messages_repo = ChatMessagesRepository(db)
 
     # Buscar usuário atualizado do banco de dados para garantir tokens recentes
     user = await users_repo.find_by_id(current_user.id)
@@ -43,6 +45,15 @@ async def handle_query(
     print(f"[ROUTE /query/] Usuário atualizado do BD:")
     print(f"  - github_token: {'***' if user.github_token else 'NULL'}")
     print(f"  - github_username: {user.github_username}")
+
+    # Gravar a nova mensagem do utilizador assim que ela chega
+    await chat_messages_repo.save_message(user_id=user.id, role="user", content=body.query)
+
+    # Puxar as últimas 10 mensagens do histórico desse utilizador antes de chamar o Orquestrador
+    # Como acabámos de gravar a mensagem do utilizador, a mais recente (índice 0) é a atual.
+    # Queremos apenas as 10 mensagens anteriores como contexto histórico.
+    all_history = await chat_messages_repo.get_history(user_id=user.id, limit=11)
+    history = all_history[1:11]
 
     async def refresh_google() -> str:
         refreshed_user = await users_repo.find_by_id(user.id)
@@ -65,4 +76,15 @@ async def handle_query(
         agents=body.agents,
     )
 
-    return await orchestrator.handle(task, user_data)
+    result = await orchestrator.handle(task, user_data, history=history)
+
+    # Garante que a resposta final gerada pelo agente também seja guardada na BD com a role 'assistant'
+    agents_used = [r.agent.value for r in result.results]
+    await chat_messages_repo.save_message(
+        user_id=user.id,
+        role="assistant",
+        content=result.summary,
+        agent_used=agents_used
+    )
+
+    return result

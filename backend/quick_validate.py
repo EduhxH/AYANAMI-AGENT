@@ -116,6 +116,240 @@ def test_email_init_exports():
         return False
 
 
+def test_email_agent_logic():
+    """Valida a logica interna do EmailAgent com mocks."""
+    print("\n" + "=" * 80)
+    print("[TESTE] Validacao de logica interna - EmailAgent")
+    print("=" * 80)
+    
+    import sys
+    from pathlib import Path
+    src_dir = str(Path(__file__).parent / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+        
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from dev_agent.agents.email_agent import EmailAgent, EmailIntent
+    
+    mock_emails = [
+        {"id": "1", "from": "GitHub <noreply@github.com>", "subject": "Alert", "snippet": "Auto alert"},
+        {"id": "2", "from": "Render <no-reply@render.com>", "subject": "Build failed", "snippet": "System"},
+        {"id": "3", "from": "John Doe <john.doe@example.com>", "subject": "Hello Friend", "snippet": "How are you?"},
+        {"id": "4", "from": "Uber <noreply@uber.com>", "subject": "Receipt", "snippet": "Receipt"},
+        {"id": "5", "from": "Jane Doe <jane.doe@example.com>", "subject": "Meeting", "snippet": "Let's meet"},
+    ]
+    
+    settings_mock = MagicMock()
+    settings_mock.groq_api_key = "fake_key"
+    settings_mock.groq_model = "fake_model"
+    
+    async def run_tests():
+        with patch("dev_agent.agents.email_agent.get_settings", return_value=settings_mock), \
+             patch("dev_agent.agents.email_agent.AsyncGroq") as mock_groq_class, \
+             patch("dev_agent.agents.email_agent.GmailReader") as mock_reader_class, \
+             patch("dev_agent.agents.email_agent.GmailSender") as mock_sender_class:
+            
+            mock_reader = mock_reader_class.return_value
+            mock_reader.get_recent_emails = AsyncMock(return_value=mock_emails)
+            
+            mock_sender = mock_sender_class.return_value
+            mock_sender.send_email = AsyncMock(return_value={"status": "sent"})
+            
+            mock_groq = mock_groq_class.return_value
+            mock_completion = AsyncMock()
+            mock_completion.choices = [
+                MagicMock(message=MagicMock(content="Mocked regenerated body response"))
+            ]
+            mock_groq.chat.completions.create = AsyncMock(return_value=mock_completion)
+            
+            agent = EmailAgent(token="fake_token")
+            
+            # TEST 1: Recipient is missing, should pick first human email (john.doe@example.com)
+            intent1 = EmailIntent(
+                intent="send",
+                recipient=None,
+                subject="Hi",
+                body="This is the message body.",
+                reasoning="Send simple mail"
+            )
+            res1 = await agent._handle_send(intent1)
+            assert res1.success is True, f"Failed test 1: {res1.error}"
+            assert res1.data["recipient"] == "john.doe@example.com", f"Expected john.doe@example.com, got {res1.data['recipient']}"
+            assert res1.data["subject"] == "Hi"
+            
+            # TEST 2: Subject is "Sem assunto", should prefix original subject "Hello Friend" with "Re: "
+            intent2 = EmailIntent(
+                intent="send",
+                recipient=None,
+                subject="Sem assunto",
+                body="This is the message body.",
+                reasoning="Send simple mail"
+            )
+            res2 = await agent._handle_send(intent2)
+            assert res2.success is True, f"Failed test 2: {res2.error}"
+            assert res2.data["subject"] == "Re: Hello Friend", f"Expected 'Re: Hello Friend', got '{res2.data['subject']}'"
+            
+            # TEST 3: Body is missing, should regenerate using LLM
+            intent3 = EmailIntent(
+                intent="send",
+                recipient="john.doe@example.com",
+                subject="Hello Friend",
+                body="",
+                reasoning="Send suggest"
+            )
+            res3 = await agent._handle_send(intent3, query="envie esta sugestão")
+            assert res3.success is True, f"Failed test 3: {res3.error}"
+            assert "Mocked regenerated body" in res3.data["body_preview"], f"Body preview doesn't contain regenerated text: {res3.data['body_preview']}"
+            
+            print("[OK] Todos os testes logicos do EmailAgent passaram!")
+            return True
+
+    try:
+        return asyncio.run(run_tests())
+    except Exception as e:
+        print(f"[ERRO] Falha ao correr testes logicos: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_chat_memory_logic():
+    """Valida a persistencia do historico de conversa e injecao de memoria com mocks."""
+    print("\n" + "=" * 80)
+    print("[TESTE] Validacao de logica de Chat Memory - Orchestrator & Repo")
+    print("=" * 80)
+
+    import sys
+    from pathlib import Path
+    src_dir = str(Path(__file__).parent / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from dev_agent.database.models.chat_message import ChatMessage
+    from dev_agent.database.repositories.chat_messages import ChatMessagesRepository
+    from dev_agent.orchestrator.orchestrator import Orchestrator
+    from dev_agent.core.models import TaskRequest
+
+    # Test 1: Pydantic model ChatMessage
+    msg = ChatMessage(user_id="user123", role="user", content="Ola, recordas-te de mim?")
+    assert msg.user_id == "user123"
+    assert msg.role == "user"
+    assert msg.content == "Ola, recordas-te de mim?"
+    assert msg.agent_used is None
+    print("[OK] Modelo ChatMessage instanciado com sucesso")
+
+    # Test 2: ChatMessagesRepository
+    mock_db = MagicMock()
+    mock_collection = MagicMock()
+    mock_db.chat_messages = mock_collection
+    
+    # Mock insert_one
+    mock_insert_result = MagicMock()
+    mock_insert_result.inserted_id = "msg_id_123"
+    mock_collection.insert_one = AsyncMock(return_value=mock_insert_result)
+
+    # Mock find().sort().limit()
+    mock_cursor = MagicMock()
+    mock_cursor.to_list = AsyncMock(return_value=[
+        {"_id": "msg_id_123", "user_id": "user123", "role": "user", "content": "Ola, recordas-te de mim?", "timestamp": "2026-05-20T10:00:00"}
+    ])
+    mock_collection.find.return_value.sort.return_value.limit.return_value = mock_cursor
+
+    async def run_tests():
+        repo = ChatMessagesRepository(mock_db)
+        
+        # Test save_message
+        saved = await repo.save_message(user_id="user123", role="user", content="Ola, recordas-te de mim?")
+        assert saved.id == "msg_id_123"
+        assert saved.user_id == "user123"
+        assert mock_collection.insert_one.called
+        print("[OK] Repositorio save_message funcional")
+
+        # Test get_history
+        history = await repo.get_history(user_id="user123", limit=10)
+        assert len(history) == 1
+        assert history[0]["content"] == "Ola, recordas-te de mim?"
+        assert mock_collection.find.called
+        print("[OK] Repositorio get_history funcional")
+
+        # Test 3: Orchestrator Injecting History
+        settings_mock = MagicMock()
+        settings_mock.groq_api_key = "fake_key"
+        settings_mock.groq_model = "fake_model"
+
+        with patch("dev_agent.orchestrator.orchestrator.get_settings", return_value=settings_mock), \
+             patch("dev_agent.orchestrator.orchestrator.AsyncGroq") as mock_groq_class, \
+             patch("dev_agent.orchestrator.orchestrator.Planner") as mock_planner_class:
+            
+            mock_groq = mock_groq_class.return_value
+            mock_completion = AsyncMock()
+            mock_completion.choices = [
+                MagicMock(message=MagicMock(content="Claro que sim! Chamas-te Joao."))
+            ]
+            mock_groq.chat.completions.create = AsyncMock(return_value=mock_completion)
+
+            orchestrator = Orchestrator()
+            orchestrator.planner.decide_agents = AsyncMock(return_value=[])
+            
+            # Setup task and fake user context
+            task = TaskRequest(
+                query="Como me chamo?",
+                user_id="user123"
+            )
+            user_data = {"user_id": "user123"}
+            
+            # Mock historical context
+            fake_history = [
+                {"role": "user", "content": "Chamo-me Joao."},
+                {"role": "assistant", "content": "Sim, ola! Qual e o teu nome?"},
+                {"role": "user", "content": "Ola, recordas-te de mim?"}
+            ]
+            
+            # Mock Dispatcher running and returning empty results (since it's a general intent)
+            with patch("dev_agent.orchestrator.orchestrator.Dispatcher") as mock_dispatcher_class:
+                mock_dispatcher = mock_dispatcher_class.return_value
+                mock_dispatcher.run = AsyncMock(return_value=[])
+                
+                result = await orchestrator.handle(task, user_data, history=fake_history)
+                assert result.summary == "Claro que sim! Chamas-te Joao."
+                
+                # Verify calls made to AsyncGroq create
+                create_mock = mock_groq.chat.completions.create
+                assert create_mock.called
+                
+                # Check messages argument structure in LLM call
+                called_kwargs = create_mock.call_args[1]
+                called_messages = called_kwargs["messages"]
+                
+                # We expect the messages to be:
+                # 1. oldest: "Ola, recordas-te de mim?"
+                # 2. "Sim, ola! Qual e o teu nome?"
+                # 3. "Chamo-me Joao."
+                # 4. Current user prompt
+                assert len(called_messages) == 4
+                assert called_messages[0]["role"] == "user"
+                assert called_messages[0]["content"] == "Ola, recordas-te de mim?"
+                assert called_messages[1]["role"] == "assistant"
+                assert called_messages[1]["content"] == "Sim, ola! Qual e o teu nome?"
+                assert called_messages[2]["role"] == "user"
+                assert called_messages[2]["content"] == "Chamo-me Joao."
+                assert "Como me chamo?" in called_messages[3]["content"]
+                
+                print("[OK] Orquestrador injetou historico estruturalmente nas chamadas do LLM!")
+                return True
+
+    try:
+        return asyncio.run(run_tests())
+    except Exception as e:
+        print(f"[ERRO] Falha ao correr testes logicos de memory: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Executa validacoes."""
     print("\n" + "=" * 80)
@@ -127,6 +361,8 @@ def main():
         ("GmailSender", test_sender_exists),
         ("__init__.py", test_init_files),
         ("Exports", test_email_init_exports),
+        ("Lógica EmailAgent", test_email_agent_logic),
+        ("Lógica ChatMemory", test_chat_memory_logic),
     ]
     
     results = []
