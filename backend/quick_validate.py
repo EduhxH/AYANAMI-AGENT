@@ -294,8 +294,44 @@ def test_email_agent_logic():
             assert agent._is_valid_human_email("promo@spamdomain.com") is False
             assert agent._is_valid_human_email("hello@company.com") is True
             
-            # Restore default mock emails
+            # TEST 7: Creative generation / general content request bypasses inbox check and succeeds
+            import json
+            mock_reader.get_recent_emails.reset_mock()
+            
+            mock_classify_response = MagicMock()
+            mock_classify_response.choices = [
+                MagicMock(message=MagicMock(content=json.dumps({
+                    "intent": "send",
+                    "recipient": "eduardo.carvalho.pt.dev@gmail.com",
+                    "subject": None,
+                    "body": None,
+                    "reasoning": "Gere uma receita de bolo"
+                })))
+            ]
+            
+            mock_generation_response = MagicMock()
+            mock_generation_response.choices = [
+                MagicMock(message=MagicMock(content="Bolo de chocolate maravilhoso receita..."))
+            ]
+            
+            mock_groq.chat.completions.create.side_effect = [
+                mock_classify_response,
+                mock_generation_response
+            ]
+            
+            res7 = await agent.run(
+                query="Gere uma receita de bolo de chocolate para eduardo.carvalho.pt.dev@gmail.com",
+                history=None
+            )
+            assert res7.success is True, f"Failed test 7: {res7.error}"
+            assert res7.data["action"] == "send"
+            assert res7.data["recipient"] == "eduardo.carvalho.pt.dev@gmail.com"
+            assert "Bolo de chocolate" in res7.data["body_preview"]
+            assert not mock_reader.get_recent_emails.called, "Reader should not have been called for creative generation"
+            
+            # Restore default mock emails and side effect
             mock_reader.get_recent_emails.return_value = mock_emails
+            mock_groq.chat.completions.create.side_effect = None
             
             print("[OK] Todos os testes logicos do EmailAgent passaram!")
             return True

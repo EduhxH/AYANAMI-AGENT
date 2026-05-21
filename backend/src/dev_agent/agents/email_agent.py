@@ -124,6 +124,10 @@ class EmailAgent(BaseAgent):
 
         logger.debug("EmailAgent intent=%s reasoning=%s", intent.intent, intent.reasoning)
 
+        # 1. Creative or general generation flow (ex: recipes, textos do zero, piadas)
+        if self._is_creative_or_general_generation(query):
+            return await self._handle_creative_generation(query, intent, history=history)
+
         match intent.intent:
             case "send":
                 return await self._handle_send(intent, query, history=history)
@@ -168,107 +172,189 @@ class EmailAgent(BaseAgent):
     # Handlers
     # ------------------------------------------------------------------
 
+    async def _handle_creative_generation(self, query: str, intent: EmailIntent, history: Optional[List[dict]] = None) -> AgentResult:
+        logger.debug("Creative or general generation query detected: %s", query)
+        
+        # 1. Retrieve recipient (direct from intent or query extract)
+        recipient = intent.recipient
+        if not recipient and query:
+            recipient = self._extract_email_address(query)
+            
+        # Validate recipient against outgoing anti-spam filter if present
+        if recipient and not self._is_valid_human_email(recipient):
+            recipient = None
+
+        # 2. Fallback to history turn memory inheritance if query is confirmation and history is present
+        if not recipient:
+            if history and self._is_confirmation_query(query):
+                extracted = await self._extract_from_previous_turn(history)
+                if extracted and extracted.get("recipient"):
+                    ext_recip = extracted.get("recipient")
+                    if self._is_valid_human_email(ext_recip):
+                        recipient = ext_recip
+                        logger.debug("Herdado recipient do histórico para fluxo criativo: %s", recipient)
+
+        # 3. Determine if intent is send or draft
+        # If a recipient is specified or intent is send, we want to send it.
+        is_send = (intent.intent == "send") or bool(recipient) or bool(re.search(r"\b(envie|enviar|mande|mandar|dispare|disparar|envia|manda)\b", query.lower()))
+
+        # 4. Generate creative body using LLM knowledge directly (no inbox correlation!)
+        body = intent.body
+        body_str = (body or "").strip()
+        if len(body_str) < 3:
+            try:
+                logger.debug("Generating creative/general email body directly using LLM...")
+                body = await self._generate_creative_body(query)
+                body = (body or "").strip()
+            except Exception as exc:
+                logger.exception("Erro ao gerar corpo criativo")
+                return self.failure(f"Erro ao gerar corpo do email: {exc}")
+
+        subject = intent.subject
+        if not subject or subject.strip().lower() in ("", "sem assunto"):
+            subject = "Conteúdo sugerido"
+
+        if is_send:
+            if not recipient:
+                return self.failure(
+                    "Não consegui resgatar o e-mail do destinatário no histórico. "
+                    "Por favor, me informe o endereço correto para o envio."
+                )
+            
+            try:
+                sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
+                result = await sender.send_email(
+                    to=recipient,
+                    subject=subject,
+                    body=body,
+                )
+                return self.success({
+                    "action": "send",
+                    "recipient": recipient,
+                    "subject": subject,
+                    "body_preview": body[:150],
+                    "result": result,
+                })
+            except Exception as exc:
+                logger.exception("Erro ao enviar email criativo")
+                return self.failure(f"Erro ao enviar email: {exc}")
+        else:
+            return self.success({
+                "action": "draft",
+                "proposed_response": body,
+                "instructions": (
+                    "Sugestão gerada. Para enviar este texto, confirma o destinatário e o corpo no próximo pedido."
+                ),
+            })
+
     async def _handle_send(self, intent: EmailIntent, query: Optional[str] = None, history: Optional[List[dict]] = None) -> AgentResult:
         query_text = query or ""
         is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query_text, re.IGNORECASE))
         injected_repos = getattr(self, "github_repositories", None)
 
         recipient = intent.recipient
+        if not recipient and query_text:
+            recipient = self._extract_email_address(query_text)
         if recipient and not self._is_valid_human_email(recipient):
             recipient = None
 
         subject = intent.subject
         body = intent.body
 
-        # 1. Turn memory inheritance (if query is confirmation query and history is present)
-        if history and self._is_confirmation_query(query_text):
-            extracted = await self._extract_from_previous_turn(history)
-            if extracted:
-                if not recipient and extracted.get("recipient"):
-                    ext_recip = extracted.get("recipient")
-                    if self._is_valid_human_email(ext_recip):
-                        recipient = ext_recip
-                        logger.debug("Herdado recipient do histórico: %s", recipient)
-                if (not subject or subject.strip().lower() in ("", "sem assunto")) and extracted.get("subject"):
-                    subject = extracted.get("subject")
-                    logger.debug("Herdado subject do histórico: %s", subject)
-                if (not body or len(body.strip()) < 3) and extracted.get("body"):
-                    body = extracted.get("body")
-                    logger.debug("Herdado body do histórico: %s", body)
-
-        # 2. Strict name matching in inbox (no blind fallback)
-        selected_email = None
-        if not recipient and query_text:
-            try:
-                reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
-                emails = await reader.get_recent_emails(max_results=15)
-                if emails:
-                    for e in emails:
-                        from_val = e.get("from") or ""
-                        email_addr = self._extract_email_address(from_val)
-                        if email_addr and self._is_valid_human_email(email_addr):
-                            display_name = from_val.split("<")[0].replace('"', '').strip() if "<" in from_val else from_val.replace('"', '').strip()
-                            if self._is_name_match(display_name, query_text):
-                                if is_github_query:
-                                    is_eduardo_carvalho = (
-                                        re.search(r"\beduardo\b", display_name, re.IGNORECASE) and 
-                                        re.search(r"\bcarvalho\b", display_name, re.IGNORECASE)
-                                    )
-                                    if not is_eduardo_carvalho:
-                                        continue
-                                recipient = email_addr
-                                selected_email = e
-                                logger.debug("Mapeado destinatário por correspondência de nome: %s", recipient)
-                                break
-            except Exception as exc:
-                logger.debug("Não foi possível aceder ao histórico de emails para resolver nome: %s", exc)
-
-        # 3. Handle body and subject resolution
-        if is_github_query and injected_repos:
-            subject = subject or f"Resumo dos repositórios ({len(injected_repos)})"
-            repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
-            body = (
-                f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
-                "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
-            )
+        # 1. Creative or general generation flow (ex: recipes, textos do zero, piadas)
+        if self._is_creative_or_general_generation(query_text):
+            return await self._handle_creative_generation(query_text, intent, history=history)
         else:
-            if not subject or subject.strip().lower() in ("", "sem assunto"):
-                if selected_email:
-                    orig_subject = selected_email.get("subject") or "Sem assunto"
-                    if orig_subject.lower().startswith("re:"):
-                        subject = orig_subject
+            # 2. Regular inbox context correlation flow
+            # Turn memory inheritance (if query is confirmation query and history is present)
+            if history and self._is_confirmation_query(query_text):
+                extracted = await self._extract_from_previous_turn(history)
+                if extracted:
+                    if not recipient and extracted.get("recipient"):
+                        ext_recip = extracted.get("recipient")
+                        if self._is_valid_human_email(ext_recip):
+                            recipient = ext_recip
+                            logger.debug("Herdado recipient do histórico: %s", recipient)
+                    if (not subject or subject.strip().lower() in ("", "sem assunto")) and extracted.get("subject"):
+                        subject = extracted.get("subject")
+                        logger.debug("Herdado subject do histórico: %s", subject)
+                    if (not body or len(body.strip()) < 3) and extracted.get("body"):
+                        body = extracted.get("body")
+                        logger.debug("Herdado body do histórico: %s", body)
+
+            # Strict name matching in inbox (no blind fallback)
+            selected_email = None
+            if not recipient and query_text:
+                try:
+                    reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
+                    emails = await reader.get_recent_emails(max_results=15)
+                    if emails:
+                        for e in emails:
+                            from_val = e.get("from") or ""
+                            email_addr = self._extract_email_address(from_val)
+                            if email_addr and self._is_valid_human_email(email_addr):
+                                display_name = from_val.split("<")[0].replace('"', '').strip() if "<" in from_val else from_val.replace('"', '').strip()
+                                if self._is_name_match(display_name, query_text):
+                                    if is_github_query:
+                                        is_eduardo_carvalho = (
+                                            re.search(r"\beduardo\b", display_name, re.IGNORECASE) and 
+                                            re.search(r"\bcarvalho\b", display_name, re.IGNORECASE)
+                                        )
+                                        if not is_eduardo_carvalho:
+                                            continue
+                                    recipient = email_addr
+                                    selected_email = e
+                                    logger.debug("Mapeado destinatário por correspondência de nome: %s", recipient)
+                                    break
+                except Exception as exc:
+                    logger.debug("Não foi possível aceder ao histórico de emails para resolver nome: %s", exc)
+
+            # Handle body and subject resolution
+            if is_github_query and injected_repos:
+                subject = subject or f"Resumo dos repositórios ({len(injected_repos)})"
+                repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
+                body = (
+                    f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
+                    "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
+                )
+            else:
+                if not subject or subject.strip().lower() in ("", "sem assunto"):
+                    if selected_email:
+                        orig_subject = selected_email.get("subject") or "Sem assunto"
+                        if orig_subject.lower().startswith("re:"):
+                            subject = orig_subject
+                        else:
+                            subject = f"Re: {orig_subject}"
                     else:
-                        subject = f"Re: {orig_subject}"
-                else:
-                    subject = "Sem assunto"
+                        subject = "Sem assunto"
 
-            body_str = (body or "").strip()
-            if len(body_str) < 3:
-                if not selected_email and not is_github_query:
-                    try:
-                        reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
-                        emails = await reader.get_recent_emails(max_results=15)
-                        if emails:
-                            filtered_emails = []
-                            for e in emails:
-                                email_addr = self._extract_email_address(e.get("from", ""))
-                                if email_addr and self._is_valid_human_email(email_addr):
-                                    filtered_emails.append(e)
-                            if filtered_emails:
-                                selected_email = self._pick_most_relevant(query_text, filtered_emails)
-                    except Exception as exc:
-                        logger.debug("Erro ao tentar buscar email relevante para regenerar corpo: %s", exc)
+                body_str = (body or "").strip()
+                if len(body_str) < 3:
+                    if not selected_email and not is_github_query:
+                        try:
+                            reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
+                            emails = await reader.get_recent_emails(max_results=15)
+                            if emails:
+                                filtered_emails = []
+                                for e in emails:
+                                    email_addr = self._extract_email_address(e.get("from", ""))
+                                    if email_addr and self._is_valid_human_email(email_addr):
+                                        filtered_emails.append(e)
+                                if filtered_emails:
+                                    selected_email = self._pick_most_relevant(query_text, filtered_emails)
+                        except Exception as exc:
+                            logger.debug("Erro ao tentar buscar email relevante para regenerar corpo: %s", exc)
 
-                if selected_email:
-                    try:
-                        logger.debug("Corpo ausente. A regenerar corpo usando LLM.")
-                        body = await self._regenerate_body(query_text or intent.reasoning or "", selected_email)
-                        body = (body or "").strip()
-                    except Exception as exc:
-                        logger.exception("Erro ao regenerar corpo do email")
-                        return self.failure(f"Erro ao gerar corpo do email: {exc}")
+                    if selected_email:
+                        try:
+                            logger.debug("Corpo ausente. A regenerar corpo usando LLM.")
+                            body = await self._regenerate_body(query_text or intent.reasoning or "", selected_email)
+                            body = (body or "").strip()
+                        except Exception as exc:
+                            logger.exception("Erro ao regenerar corpo do email")
+                            return self.failure(f"Erro ao gerar corpo do email: {exc}")
 
-        # 4. Strict validation check
+        # 3. Strict validation check
         if not recipient or not self._is_valid_human_email(recipient) or not body or len(body.strip()) < 3:
             return self.failure(
                 "Não consegui resgatar o e-mail do destinatário no histórico. "
@@ -294,6 +380,9 @@ class EmailAgent(BaseAgent):
             return self.failure(f"Erro ao enviar email: {exc}")
 
     async def _handle_draft(self, query: str, intent: EmailIntent) -> AgentResult:
+        if self._is_creative_or_general_generation(query):
+            return await self._handle_creative_generation(query, intent)
+
         q_low = query.lower()
         has_explicit_body = intent.body and len(intent.body.strip()) > 40
         is_requesting_generation = bool(
@@ -440,6 +529,50 @@ class EmailAgent(BaseAgent):
             return all(word in query_clean for word in name_words)
             
         return any(rf"\b{re.escape(word)}\b" for word in name_words if re.search(rf"\b{re.escape(word)}\b", query_clean))
+
+    def _is_creative_or_general_generation(self, query: str) -> bool:
+        if not query:
+            return False
+        q = query.lower()
+        creative_keywords = [
+            r"\breceita\b", r"\bpiada\b", r"\bjoke\b", r"\brecipe\b", r"\bbolo\b", r"\bcake\b",
+            r"\bpoema\b", r"\bhist[oó]ria\b", r"\btexto do zero\b", r"\bescreva do zero\b",
+            r"\bescrever do zero\b", r"\bcriar do zero\b", r"\bcria do zero\b",
+            r"\bconto\b", r"\bpiadas\b", r"\breceitas\b"
+        ]
+        has_creative_word = any(re.search(pat, q) for pat in creative_keywords)
+        
+        generation_verbs = [r"\bgere\b", r"\bgerar\b", r"\bcrie\b", r"\bcriar\b", r"\bescreva\b", r"\bescrever\b"]
+        has_generation_verb = any(re.search(pat, q) for pat in generation_verbs)
+        
+        is_reply = bool(re.search(r"\b(respond|respost|reply|re:)\b", q))
+        
+        if has_creative_word:
+            return True
+        if has_generation_verb and not is_reply:
+            return True
+        return False
+
+    async def _generate_creative_body(self, query: str) -> str:
+        prompt = (
+            f"O utilizador solicitou o seguinte conteúdo para um e-mail:\n"
+            f"\"{query}\"\n\n"
+            "Gera o corpo do e-mail com base nesse pedido. Devolve apenas o texto puro do e-mail (como receitas, piadas ou textos), "
+            "sem saudações redundantes, justificações extras, metadados ou assinaturas fictícias."
+        )
+        resp = await self.client.chat.completions.create(
+            model=self.settings.groq_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "És um assistente de escrita de e-mails criativo. Escreve respostas de alta qualidade em português."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=800,
+        )
+        return (resp.choices[0].message.content or "").strip()
 
     async def _summarise_relevant(self, query: str, emails: list[dict]) -> str:
         listing = "\n".join(
