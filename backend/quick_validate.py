@@ -552,6 +552,49 @@ def test_chat_memory_logic():
         return False
 
 
+def test_github_agent_logic():
+    """Valida o parser/classificador de intenções do GitHubAgent."""
+    print("\n" + "=" * 80)
+    print("[TESTE] Validacao de logica interna - GitHubAgent")
+    print("=" * 80)
+    
+    import sys
+    from pathlib import Path
+    src_dir = str(Path(__file__).parent / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+        
+    from dev_agent.agents.github_agent import GitHubAgent
+    
+    agent = GitHubAgent(token="fake_token", github_username="testuser")
+    
+    # 1. Test is_create_repo_request
+    assert agent._is_create_repo_request("faça um repo para mim com nome de \"teste923\" e n deixe ele publico...") is True
+    assert agent._is_create_repo_request("crie um repositório para mim") is True
+    assert agent._is_create_repo_request("new repo please") is True
+    assert agent._is_create_repo_request("quero criar projeto de api") is True
+    assert agent._is_create_repo_request("listar os repositórios do github") is False
+    assert agent._is_create_repo_request("delete o repo antigo") is False
+    
+    # 2. Test _extract_repo_name_hint
+    assert agent._extract_repo_name_hint("faça um repo para mim com nome de \"teste923\" e n deixe ele publico...") == "teste923"
+    assert agent._extract_repo_name_hint("crie um repositório chamado 'my-new-project'") == "my-new-project"
+    assert agent._extract_repo_name_hint("new repo 'super-cool-app'") == "super-cool-app"
+    assert agent._extract_repo_name_hint("criar projeto de nome my_awesome_api") == "my_awesome_api"
+    
+    # 3. Test _resolve_repository_visibility
+    assert agent._resolve_repository_visibility("faça um repo para mim com nome de \"teste923\" e n deixe ele publico...") == "private"
+    assert agent._resolve_repository_visibility("crie um repo público") == "public"
+    assert agent._resolve_repository_visibility("crie um repositório privado") == "private"
+    assert agent._resolve_repository_visibility("quero um repo sem ser publico") == "private"
+    assert agent._resolve_repository_visibility("crie um repo n publico") == "private"
+    assert agent._resolve_repository_visibility("cria um repo, not public") == "private"
+    assert agent._resolve_repository_visibility("create a repo, don't make it public") == "private"
+    
+    print("[OK] Todos os testes do GitHubAgent (Intenção e Parser) passaram!")
+    return True
+
+
 def main():
     """Executa validacoes."""
     print("\n" + "=" * 80)
@@ -565,6 +608,7 @@ def main():
         ("Exports", test_email_init_exports),
         ("Lógica EmailAgent", test_email_agent_logic),
         ("Lógica ChatMemory", test_chat_memory_logic),
+        ("Lógica GitHubAgent", test_github_agent_logic),
     ]
     
     results = []

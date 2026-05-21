@@ -274,20 +274,27 @@ class GitHubAgent(BaseAgent):
 
     def _is_create_repo_request(self, query: str) -> bool:
         q = query.lower()
-        # Match common verbs and phrases that indicate repo creation (Portuguese & English)
-        if re.search(r"\b(cria|criar|crie|create|novo|nova)\b", q):
-            # If mentions 'novo' ensure it's followed by repo/repositório soon after
-            if "novo" in q or "nova" in q:
-                if re.search(r"\b(novo|nova)\b.*\b(repo|reposit[oó]rio)\b", q):
-                    return True
-            # Direct verbs or explicit 'repo' mentions
-            if re.search(r"\b(cria|criar|crie|create)\b.*\b(repo|reposit[oó]rio)\b", q):
-                return True
-            # simple forms like 'cria um repo', 'create repo'
-            if re.search(r"\b(cria|criar|crie|create)\b", q) and ("repo" in q or "reposit" in q):
-                return True
-        # also check for explicit phrases
-        return any(phrase in q for phrase in ("novo repositório", "novo repo", "create repo", "create repository"))
+        # Direct phrase matches
+        phrases = [
+            "faça um repo", "faca um repo", "faça repo", "faca repo",
+            "crie um repositório", "crie um repositorio", "crie repo",
+            "criar repositório", "criar repositorio", "cria repositório", "cria repositorio",
+            "new repo", "new repository", "create repo", "create repository",
+            "criar projeto", "criar project", "crie projeto", "crie project",
+            "novo repositório", "novo repositorio", "novo repo", "novo projeto",
+            "nova repo", "nova repository", "create project", "make repo", "make repository"
+        ]
+        if any(phrase in q for phrase in phrases):
+            return True
+
+        # Verb + target regex matching
+        verbs_pattern = r"\b(cria|criar|crie|create|faça|faca|fazer|make|new|novo|nova)\b"
+        targets_pattern = r"\b(repo|reposit[oó]rio|repository|projet[oó]|project)\b"
+        
+        if re.search(verbs_pattern, q) and re.search(targets_pattern, q):
+            return True
+            
+        return False
 
     def _is_delete_repo_request(self, query: str) -> bool:
         q = query.lower()
@@ -358,47 +365,74 @@ class GitHubAgent(BaseAgent):
         # Robust detection for private intent. Match explicit words or negation patterns
         if "privado" in q or "private" in q:
             return "private"
-        # Patterns like: "não deixe público", "nao deixe ele publico", "não deixe-o público"
-        if re.search(r"\b(n[ãa]o|nao)\b.*\bdeix(?:e|ar|ando)\b.*\bpublic", q):
+
+        # Check for negation patterns indicating NOT public:
+        # e.g., "não público", "nao publico", "n publico", "no public"
+        # "não deixe público", "nao deixe ele publico", "n deixe ele publico", "n deixa publico"
+        # We look for a negation word (não, nao, n, no, not, sem) followed by something and then public
+        negation_words = r"\b(n[ãa]o|nao|n|no|not|sem)\b"
+        public_words = r"\b(publ[ií]c|p[uú]blico)\b"
+        
+        # If there is a negation followed by public (with optional words like "deixe", "ele", "ser" in between)
+        if re.search(rf"{negation_words}.*?{public_words}", q):
             return "private"
 
-        # Shorthand 'n' used as 'não' or variations like 'n deixe publico', 'n publico'
-        # We want to detect isolated ' n ' or ' n ' before 'publico'
-        if re.search(r"\b[nN]\b\s*(?:deixe|deix|deix-e|deix-o|nao)?\b.*\bpublic", query):
+        # Shorthand or direct matches
+        direct_private_phrases = [
+            "não deixe público", "nao deixe publico", "n deixe publico", "n deixe ele publico",
+            "não público", "nao publico", "n publico", "não publíco",
+            "sem ser publico", "sem ser público", "not public", "dont make it public", "don't make it public"
+        ]
+        if any(phrase in q for phrase in direct_private_phrases):
             return "private"
 
-        # Direct negative phrases
-        for phrase in ("não deixe público", "nao deixe publico", "não público", "nao publico", "não publíco", "n deixe publico", "n publico", "n deixe ele publico", "sem ser publico"):
-            if phrase in q:
-                return "private"
         return "public"
 
     def _extract_repo_name_hint(self, query: str) -> str | None:
-        # Try several patterns that commonly indicate a repo name after create/novo/chamado
-        # Patterns ordered to prefer explicit connectors (chamado/nome/denominado) and
-        # to avoid capturing connector words themselves as the repo name.
-        connector = r"(?:chamad[oó]|chamada|chamado|denominado|nome|como)"
-        patterns = [
-            # cria um repo chamado <name>
-            rf"(?:cria|criar|crie|create)\s+(?:um\s+)?(?:reposit[oó]rio|repo)(?:\s+{connector})?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            # cria '<name>'
-            r"(?:cria|criar|crie|create)\s+[\"']([a-zA-Z0-9_.-]+)[\"']",
-            # repositório chamado <name>
-            rf"reposit[oó]rio(?:\s+{connector})?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            # chamado <name> / chamad[oó]o de <name>
-            rf"{connector}(?:\s+de)?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            # repo <name>
-            r"repo\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            r"projecto\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-            r"projeto\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?",
-        ]
+        # 1. First, check if there is a pattern like `nome de "teste923"` or `nome: "teste923"` or `nome "teste923"`
+        # or simply `nome de teste923`.
+        # Connectors can be: chamado, chamada, denominado, nome, como, etc.
+        connector = r"(?:chamad[oó]|chamada|denominado|nome|como)"
+        
+        # Pattern checking for connector + value (optionally quoted)
+        match_conn = re.search(rf"{connector}(?:\s+de)?\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?", query, re.IGNORECASE)
+        if match_conn:
+            name = match_conn.group(1)
+            if name and name.lower() not in _STOP_WORDS:
+                return name
 
-        for pattern in patterns:
-            match = re.search(pattern, query, re.IGNORECASE)
-            if match:
-                name = match.group(1)
-                if name and name.lower() not in _STOP_WORDS:
-                    return name
+        # 2. Next, check if there's any single word inside quotes (double or single quotes)
+        # E.g. crie um repo "teste923"
+        quoted_matches = re.findall(r"[\"']([a-zA-Z0-9_.-]+)[\"']", query)
+        for name in quoted_matches:
+            if name and name.lower() not in _STOP_WORDS:
+                return name
+
+        # 3. Check for creation verb + target repo noun followed by the name
+        # E.g. "faça um repo teste923", "criar projeto teste923"
+        verbs = r"(?:cria|criar|crie|create|faça|faca|fazer|make)"
+        targets = r"(?:reposit[oó]rio|repo|projeto|project)"
+        match_verb_target = re.search(rf"{verbs}\s+(?:um\s+)?{targets}\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?", query, re.IGNORECASE)
+        if match_verb_target:
+            name = match_verb_target.group(1)
+            if name and name.lower() not in _STOP_WORDS:
+                return name
+
+        # 4. Check for target noun followed by the name
+        # E.g. "repo teste923", "projeto teste923"
+        match_target = re.search(rf"{targets}\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?", query, re.IGNORECASE)
+        if match_target:
+            name = match_target.group(1)
+            if name and name.lower() not in _STOP_WORDS:
+                return name
+
+        # 5. Check for creation verb followed by the name
+        # E.g. "cria teste923"
+        match_verb = re.search(rf"{verbs}\s+[\"']?([a-zA-Z0-9_.-]+)[\"']?", query, re.IGNORECASE)
+        if match_verb:
+            name = match_verb.group(1)
+            if name and name.lower() not in _STOP_WORDS:
+                return name
 
         # Fallback: pick the first token that looks like a repo name
         words = re.findall(r"[a-zA-Z0-9_.-]+", query)
