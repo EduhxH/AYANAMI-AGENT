@@ -49,15 +49,36 @@ class EmailIntent(BaseModel):
 # ---------------------------------------------------------------------------
 
 _CLASSIFY_SYSTEM = """\\
-You are an email intent classifier. Given a user query about email, respond ONLY with valid JSON.
+You are an email intent classifier. Given a user query about email, classify the intent.
 
-Output format:
+Respond ONLY with a valid JSON object. No explanation, no markdown, no code blocks.
+If you are unsure, still return JSON.
+
+Required output format (all fields required):
 {
   "intent": "send" | "draft" | "read",
   "recipient": "<email address or null>",
   "subject": "<subject line or null>",
   "body": "<email body or null>",
   "reasoning": "<one sentence>"
+}
+
+Example for query "envie um email para joao@example.com com assunto Reunião":
+{
+  "intent": "send",
+  "recipient": "joao@example.com",
+  "subject": "Reunião",
+  "body": null,
+  "reasoning": "O utilizador pediu envio imediato com destinatário e assunto explícitos."
+}
+
+Example for query "gere uma proposta de resposta ao último email":
+{
+  "intent": "draft",
+  "recipient": null,
+  "subject": null,
+  "body": null,
+  "reasoning": "O utilizador pediu geração de proposta/rascunho, não envio imediato."
 }
 
 Rules:
@@ -67,11 +88,9 @@ Rules:
 - "read"  → The user wants to read, view, list, search, or analyse their inbox.
 
 Crucial Instruction:
-- The 'recipient' field MUST contain only a valid structured email address (containing '@' and a domain). If the user provides only a name (e.g., "Eduardo Carvalho") or references like "him", "her", or "ele", leave the 'recipient' field strictly as null or empty (O campo 'recipient' DEVE conter apenas um endereço de e-mail estruturado válido com '@' e domínio. Se o utilizador fornecer apenas um nome próprio ou referências como 'ele', deixa o campo 'recipient' estritamente como null ou vazio).
+- The 'recipient' field MUST contain only a valid structured email address (containing '@' and a domain). If the user provides only a name (e.g., "Eduardo Carvalho") or references like "him", "her", or "ele", leave the 'recipient' field strictly as null (O campo 'recipient' DEVE conter apenas um endereço de e-mail estruturado válido com '@' e domínio. Se o utilizador fornecer apenas um nome próprio ou referências como 'ele', deixa o campo 'recipient' estritamente como null).
 - If the user uses words like "proposta", "sugestão", "rascunho", "draft", "escreva uma resposta" or "como responder", the intent is STRICTLY "draft" unless the user gives a direct command to dispatch the message immediately.
-- If the user asks to send but the recipient or body are not explicit in the current query, return null for those fields and include reasoning that the agent should infer the last referenced email from session context or ask the user to confirm the missing recipient/body. Do not invent placeholder addresses or reply with a generic example command.
-
-Respond with ONLY the JSON object — no markdown, no extra text.
+- If the user asks to send but the recipient or body are not explicit in the current query, return null for those fields and include reasoning that the agent should infer the last referenced email from session context or ask the user to confirm the missing recipient/body. Do not invent placeholder addresses.
 """
 
 
@@ -161,6 +180,7 @@ class EmailAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _classify(self, query: str, history: Optional[List[dict]] = None) -> Optional[EmailIntent]:
+        last_raw = ""
         for attempt in range(2):
             try:
                 messages = [{"role": "system", "content": _CLASSIFY_SYSTEM}]
@@ -179,13 +199,24 @@ class EmailAgent(BaseAgent):
                     messages=messages,
                     temperature=0.0,
                     max_tokens=300,
+                    response_format={"type": "json_object"},
                 )
                 raw = resp.choices[0].message.content or ""
+                last_raw = raw
+                if not raw.strip():
+                    raise ValueError(
+                        "Resposta vazia do LLM ao classificar intenção de email"
+                    )
                 data = json.loads(raw)
                 return EmailIntent(**data)
             except (json.JSONDecodeError, ValueError) as exc:
                 logger.warning("Classify attempt %d failed: %s", attempt + 1, exc)
 
+        logger.error(
+            "Classify exhausted all attempts. last_raw_response=%r query=%r",
+            last_raw,
+            query,
+        )
         return None
 
     # ------------------------------------------------------------------
