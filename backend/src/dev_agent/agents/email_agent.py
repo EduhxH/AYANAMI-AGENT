@@ -94,6 +94,25 @@ Crucial Instruction:
 """
 
 
+_GITHUB_EMAIL_SYSTEM = """\
+You are a professional email writer. Given a user request and GitHub profile context,
+write the body of an email.
+
+Rules:
+1. Write in the same language as the user's request (Portuguese if the request is in Portuguese).
+2. Structure the body as:
+   - A short greeting addressed to the recipient by first name
+   - A 3-5 sentence narrative summary of the GitHub profile: highlight the most notable
+     repositories, dominant tech stack, and any visible specialization (e.g. AI agents,
+     fullstack, tooling)
+   - A brief closing line
+3. Do NOT include a raw list of repository names or bullet lists of repos in the body.
+4. Respect the subject line and any specific instructions from the user request
+   (e.g. custom subject phrases, tone, or content requirements).
+5. Return ONLY the email body text — no subject line, no metadata, no markdown fences.
+"""
+
+
 _EXTRACTION_SYSTEM = """You are an email context extractor.
 Analyze the user's previous query and the assistant's previous response to extract:
 1. The recipient's email address (must be a valid email containing '@' and domain, e.g. 'eduardo.carvalho@gmail.com').
@@ -363,19 +382,24 @@ class EmailAgent(BaseAgent):
 
             # Handle body and subject resolution
             if is_github_query and (injected_repos or github_summary):
+                github_context = github_summary
+                if not github_context and injected_repos:
+                    github_context = "\n".join(f"- {r}" for r in injected_repos)
                 if injected_repos:
                     subject = subject or f"Resumo dos repositórios ({len(injected_repos)})"
-                    repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
-                    body = (
-                        f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
-                        "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
-                    )
                 else:
                     subject = subject or "Resumo GitHub"
-                    body = (
-                        f"Segue em baixo o resumo solicitado (fonte: GitHubAgent).\n\n{github_summary}\n\n"
-                        "Este corpo foi gerado exclusivamente com base no contexto GitHub fornecido; nenhumas informações da caixa de entrada foram usadas."
+                addressee = self._resolve_github_addressee(query_text, selected_email)
+                try:
+                    body = await self._generate_github_email_body(
+                        query=query_text,
+                        github_context=github_context,
+                        recipient_name=addressee,
+                        subject=subject,
                     )
+                except Exception as exc:
+                    logger.exception("Erro ao gerar corpo do email GitHub")
+                    return self.failure(f"Erro ao gerar corpo do email: {exc}")
             else:
                 if not subject or subject.strip().lower() in ("", "sem assunto"):
                     if selected_email:
@@ -456,24 +480,30 @@ class EmailAgent(BaseAgent):
                 ),
             })
 
-        # Se estivermos em modo GitHub com contexto injetado, gere um rascunho baseado EXCLUSIVAMENTE nesse contexto
+        # Se estivermos em modo GitHub com contexto injetado, gere um rascunho via LLM
         injected_repos = getattr(self, "github_repositories", None)
         github_summary = getattr(self, "github_summary", None)
         is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query, re.IGNORECASE))
         if is_github_query and (injected_repos or github_summary):
+            github_context = github_summary
+            if not github_context and injected_repos:
+                github_context = "\n".join(f"- {r}" for r in injected_repos)
+            draft_subject = intent.subject
             if injected_repos:
-                repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
-                draft_text = (
-                    f"Segue uma proposta de email com base na lista de repositórios fornecida:\n\n{repos_list_text}\n\n"
-                    "Nota: este rascunho foi gerado apenas a partir dos repositórios providenciados pelo GitHubAgent; nenhuma informação da inbox foi utilizada."
-                )
-                context_subject = f"Resumo de {len(injected_repos)} repositórios"
+                context_subject = draft_subject or f"Resumo de {len(injected_repos)} repositórios"
             else:
-                draft_text = (
-                    f"Segue uma proposta de email com base no resumo GitHub fornecido:\n\n{github_summary}\n\n"
-                    "Nota: este rascunho foi gerado apenas a partir do contexto providenciado pelo GitHubAgent; nenhuma informação da inbox foi utilizada."
+                context_subject = draft_subject or "Resumo GitHub"
+            addressee = self._resolve_github_addressee(query)
+            try:
+                draft_text = await self._generate_github_email_body(
+                    query=query,
+                    github_context=github_context,
+                    recipient_name=addressee,
+                    subject=context_subject,
                 )
-                context_subject = "Resumo GitHub"
+            except Exception as exc:
+                logger.exception("Erro ao gerar rascunho GitHub")
+                return self.failure(f"Erro ao gerar rascunho: {exc}")
             return self.success({
                 "action": "draft",
                 "context_from": "GitHubAgent",
@@ -620,6 +650,53 @@ class EmailAgent(BaseAgent):
         if has_generation_verb and not is_reply:
             return True
         return False
+
+    def _resolve_github_addressee(
+        self, query: str, selected_email: Optional[dict] = None
+    ) -> str:
+        if selected_email:
+            from_val = selected_email.get("from") or ""
+            display = from_val.split("<")[0].replace('"', "").strip()
+            if display:
+                return display.split()[0]
+
+        name_match = re.search(
+            r"\b(?:para|ao|à)\s+(?:o\s+|a\s+)?([A-ZÀ-ÚÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-zà-úáéíóúâêîôûãõç]+)",
+            query,
+        )
+        if name_match:
+            return name_match.group(1)
+
+        return "Eduardo"
+
+    async def _generate_github_email_body(
+        self,
+        query: str,
+        github_context: str,
+        recipient_name: Optional[str] = None,
+        subject: Optional[str] = None,
+    ) -> str:
+        addressee = recipient_name or "Eduardo"
+        subject_hint = (subject or "").strip() or "não especificado"
+
+        user_prompt = (
+            f"PEDIDO DO UTILIZADOR:\n{query}\n\n"
+            f"ASSUNTO DO EMAIL: {subject_hint}\n"
+            f"NOME DO DESTINATÁRIO (para a saudação): {addressee}\n\n"
+            f"CONTEXTO GITHUB (referência interna — não copiar como lista no email):\n"
+            f"{github_context}"
+        )
+
+        resp = await self.client.chat.completions.create(
+            model=self.settings.groq_model,
+            messages=[
+                {"role": "system", "content": _GITHUB_EMAIL_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.7,
+            max_tokens=600,
+        )
+        return (resp.choices[0].message.content or "").strip()
 
     async def _generate_creative_body(self, query: str) -> str:
         prompt = (
