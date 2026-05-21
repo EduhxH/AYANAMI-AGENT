@@ -1,6 +1,7 @@
 from groq import AsyncGroq
 import json
 import re
+from typing import Optional, List
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.models import AgentType, AgentResult
@@ -20,7 +21,7 @@ class AnimeAgent(BaseAgent):
         self.settings = get_settings()
         self.client = AsyncGroq(api_key=self.settings.groq_api_key)
 
-    async def run(self, query: str) -> AgentResult:
+    async def run(self, query: str, history: Optional[List[dict]] = None) -> AgentResult:
         try:
             recommendation = await self._recommend_anime(query)
             return self.success({"recommendation": recommendation})

@@ -165,7 +165,12 @@ def test_email_agent_logic():
             
             agent = EmailAgent(token="fake_token")
             
-            # TEST 1: Recipient is missing, should pick first human email (john.doe@example.com)
+            # TEST 1: Recipient is missing, but query is confirmation query and history is provided, should inherit recipient from previous turn
+            mock_json_content = '{"recipient": "john.doe@example.com", "subject": "Hi", "body": "This is the message body."}'
+            mock_completion1 = MagicMock()
+            mock_completion1.choices = [MagicMock(message=MagicMock(content=mock_json_content))]
+            mock_groq.chat.completions.create.return_value = mock_completion1
+
             intent1 = EmailIntent(
                 intent="send",
                 recipient=None,
@@ -173,10 +178,26 @@ def test_email_agent_logic():
                 body="This is the message body.",
                 reasoning="Send simple mail"
             )
-            res1 = await agent._handle_send(intent1)
+            fake_history = [
+                {"role": "user", "content": "envie o email sobre a receita"},
+                {"role": "assistant", "content": "Ok, gerando rascunho..."}
+            ]
+            res1 = await agent._handle_send(intent1, query="envie o email", history=fake_history)
             assert res1.success is True, f"Failed test 1: {res1.error}"
             assert res1.data["recipient"] == "john.doe@example.com", f"Expected john.doe@example.com, got {res1.data['recipient']}"
             assert res1.data["subject"] == "Hi"
+
+            # TEST 1b: Recipient cannot be resolved with certainty (no history, no name match), should abort with strict message
+            intent1b = EmailIntent(
+                intent="send",
+                recipient=None,
+                subject="Hi",
+                body="This is the message body.",
+                reasoning="Send simple mail"
+            )
+            res1b = await agent._handle_send(intent1b, query="envie o email")
+            assert res1b.success is False
+            assert res1b.error == "Não consegui resgatar o e-mail do destinatário no histórico. Por favor, me informe o endereço correto para o envio."
             
             # TEST 2: Subject is "Sem assunto", should prefix original subject "Hello Friend" with "Re: "
             intent2 = EmailIntent(
@@ -186,8 +207,9 @@ def test_email_agent_logic():
                 body="This is the message body.",
                 reasoning="Send simple mail"
             )
-            res2 = await agent._handle_send(intent2)
+            res2 = await agent._handle_send(intent2, query="Envie para o John Doe")
             assert res2.success is True, f"Failed test 2: {res2.error}"
+            assert res2.data["recipient"] == "john.doe@example.com"
             assert res2.data["subject"] == "Re: Hello Friend", f"Expected 'Re: Hello Friend', got '{res2.data['subject']}'"
             
             # TEST 3: Body is missing, should regenerate using LLM
@@ -198,7 +220,13 @@ def test_email_agent_logic():
                 body="",
                 reasoning="Send suggest"
             )
-            res3 = await agent._handle_send(intent3, query="envie esta sugestão")
+            mock_completion_body = MagicMock()
+            mock_completion_body.choices = [
+                MagicMock(message=MagicMock(content="Mocked regenerated body response"))
+            ]
+            mock_groq.chat.completions.create.return_value = mock_completion_body
+
+            res3 = await agent._handle_send(intent3, query="envie esta sugestão para o John Doe")
             assert res3.success is True, f"Failed test 3: {res3.error}"
             assert "Mocked regenerated body" in res3.data["body_preview"], f"Body preview doesn't contain regenerated text: {res3.data['body_preview']}"
             
@@ -259,6 +287,12 @@ def test_email_agent_logic():
             res5 = await agent._handle_send(intent5, query="Envie um email para o Eduardo Carvalho")
             assert res5.success is True, f"Failed test 5: {res5.error}"
             assert res5.data["recipient"] == "eduardo.carvalho@gmail.com", f"Expected eduardo.carvalho@gmail.com, got {res5.data['recipient']}"
+
+            # TEST 6: Spam and non-human domain validation checks
+            assert agent._is_valid_human_email("temu@eu.temuemail") is False
+            assert agent._is_valid_human_email("test@teste.com") is False
+            assert agent._is_valid_human_email("promo@spamdomain.com") is False
+            assert agent._is_valid_human_email("hello@company.com") is True
             
             # Restore default mock emails
             mock_reader.get_recent_emails.return_value = mock_emails

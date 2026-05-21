@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Awaitable, Callable, Literal, Optional
+from typing import Awaitable, Callable, Literal, Optional, List
 
 from groq import AsyncGroq
 from pydantic import BaseModel, field_validator
@@ -74,6 +74,22 @@ Respond with ONLY the JSON object — no markdown, no extra text.
 """
 
 
+_EXTRACTION_SYSTEM = """You are an email context extractor.
+Analyze the user's previous query and the assistant's previous response to extract:
+1. The recipient's email address (must be a valid email containing '@' and domain, e.g. 'eduardo.carvalho@gmail.com').
+2. The subject of the email (if mentioned or can be inferred).
+3. The body/content of the email (the full text of the message/draft/recipe generated).
+
+Respond ONLY with valid JSON.
+Output format:
+{
+  "recipient": "<email or null>",
+  "subject": "<subject or null>",
+  "body": "<body or null>"
+}
+"""
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -98,11 +114,11 @@ class EmailAgent(BaseAgent):
     # Entry point
     # ------------------------------------------------------------------
 
-    async def run(self, query: str) -> AgentResult:
+    async def run(self, query: str, history: Optional[List[dict]] = None) -> AgentResult:
         if not self.token:
             return self.failure("Gmail não está ligado. Liga a tua conta primeiro.")
 
-        intent = await self._classify(query)
+        intent = await self._classify(query, history=history)
         if intent is None:
             return self.failure("Não consegui interpretar o pedido. Tenta ser mais específico.")
 
@@ -110,7 +126,7 @@ class EmailAgent(BaseAgent):
 
         match intent.intent:
             case "send":
-                return await self._handle_send(intent, query)
+                return await self._handle_send(intent, query, history=history)
             case "draft":
                 return await self._handle_draft(query, intent)
             case "read":
@@ -120,15 +136,23 @@ class EmailAgent(BaseAgent):
     # Intent classification (single LLM call)
     # ------------------------------------------------------------------
 
-    async def _classify(self, query: str) -> Optional[EmailIntent]:
+    async def _classify(self, query: str, history: Optional[List[dict]] = None) -> Optional[EmailIntent]:
         for attempt in range(2):
             try:
+                messages = [{"role": "system", "content": _CLASSIFY_SYSTEM}]
+                if history:
+                    # history is sorted descending (newest first). Take up to 4 messages and reverse.
+                    recent_history = history[:4]
+                    for msg in reversed(recent_history):
+                        messages.append({
+                            "role": msg.get("role"),
+                            "content": msg.get("content")
+                        })
+                messages.append({"role": "user", "content": query})
+
                 resp = await self.client.chat.completions.create(
                     model=self.settings.groq_model,
-                    messages=[
-                        {"role": "system", "content": _CLASSIFY_SYSTEM},
-                        {"role": "user", "content": query},
-                    ],
+                    messages=messages,
                     temperature=0.0,
                     max_tokens=300,
                 )
@@ -144,136 +168,71 @@ class EmailAgent(BaseAgent):
     # Handlers
     # ------------------------------------------------------------------
 
-    async def _handle_send(self, intent: EmailIntent, query: Optional[str] = None) -> AgentResult:
-        recipient = intent.recipient
-        selected_email = None
-        # Detectar se a query é sobre GitHub/repositórios e se existe contexto injetado
+    async def _handle_send(self, intent: EmailIntent, query: Optional[str] = None, history: Optional[List[dict]] = None) -> AgentResult:
         query_text = query or ""
         is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query_text, re.IGNORECASE))
         injected_repos = getattr(self, "github_repositories", None)
 
-        # Quando em modo GitHub, a Inbox NUNCA deve ser usada para extrair assunto ou tópicos.
-        # A Inbox só pode ser consultada para resolver explicitamente o endereço do destinatário
-        # e apenas se o utilizador mencionar "Eduardo Carvalho" na query.
+        recipient = intent.recipient
+        if recipient and not self._is_valid_human_email(recipient):
+            recipient = None
 
-        # Determinar se precisamos de consultar a inbox APENAS para o destinatário
-        needs_recipient_from_inbox = False
-        if not recipient:
-            if is_github_query:
-                if re.search(r"\beduardo\b.*\bcarvalho\b|\bcarvalho\b.*\beduardo\b", query_text, re.IGNORECASE):
-                    needs_recipient_from_inbox = True
-            else:
-                needs_recipient_from_inbox = True
+        subject = intent.subject
+        body = intent.body
 
-        # Determinar se precisamos de histórico para assunto/corpo (NÃO permitido em modo GitHub)
-        needs_history_for_body = False
-        if not is_github_query:
-            needs_history_for_body = (
-                not intent.subject or
-                intent.subject.strip() == "" or
-                intent.subject.strip().lower() == "sem assunto" or
-                not intent.body or
-                len((intent.body or "").strip()) < 3
-            )
+        # 1. Turn memory inheritance (if query is confirmation query and history is present)
+        if history and self._is_confirmation_query(query_text):
+            extracted = await self._extract_from_previous_turn(history)
+            if extracted:
+                if not recipient and extracted.get("recipient"):
+                    ext_recip = extracted.get("recipient")
+                    if self._is_valid_human_email(ext_recip):
+                        recipient = ext_recip
+                        logger.debug("Herdado recipient do histórico: %s", recipient)
+                if (not subject or subject.strip().lower() in ("", "sem assunto")) and extracted.get("subject"):
+                    subject = extracted.get("subject")
+                    logger.debug("Herdado subject do histórico: %s", subject)
+                if (not body or len(body.strip()) < 3) and extracted.get("body"):
+                    body = extracted.get("body")
+                    logger.debug("Herdado body do histórico: %s", body)
 
-        if needs_recipient_from_inbox or needs_history_for_body:
+        # 2. Strict name matching in inbox (no blind fallback)
+        selected_email = None
+        if not recipient and query_text:
             try:
                 reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
                 emails = await reader.get_recent_emails(max_results=15)
                 if emails:
-                    ignored_patterns = [
-                        "no-reply", "noreply", "render.com", "github.com", "uber.com",
-                        "mailer-daemon", "notification", "bounce", "support", "alert"
-                    ]
-                    
-                    def is_valid_human_domain(email_addr: str) -> bool:
-                        if not email_addr:
-                            return False
-                        parts = email_addr.split("@")
-                        if len(parts) != 2:
-                            return False
-                        domain = parts[1].lower()
-                        rejected_keywords = [
-                            "reply", "notification", "daemon", "bounce", "alert", "system", 
-                            "support", "info", "news", "newsletter", "marketing", "billing",
-                            "bot", "no-reply", "noreply", "service", "automated", "status"
-                        ]
-                        return not any(keyword in domain for keyword in rejected_keywords)
-
-                    filtered_emails = []
                     for e in emails:
-                        from_field = (e.get("from") or "").lower()
-                        subject_field = (e.get("subject") or "").lower()
-                        if any(pattern in from_field for pattern in ignored_patterns) or \
-                           any(pattern in subject_field for pattern in ["delivery status", "failure notice", "undeliverable"]):
-                            continue
-                        filtered_emails.append(e)
-
-                    if filtered_emails and needs_recipient_from_inbox:
-                        matched_email = None
-                        if query and not recipient:
-                            query_lower = query.lower()
-                            for e in filtered_emails:
-                                from_val = e.get("from") or ""
-                                display_name = from_val.split("<")[0].replace('"', '').strip() if "<" in from_val else from_val.replace('"', '').strip()
-                                # Só permitir mapping de nome se for explicitamente o contacto 'Eduardo Carvalho'
-                                if re.search(r"\beduardo\b", display_name, re.IGNORECASE) and re.search(r"\bcarvalho\b", display_name, re.IGNORECASE):
-                                    email_addr = self._extract_email_address(from_val)
-                                    if email_addr and is_valid_human_domain(email_addr):
-                                        matched_email = e
-                                        break
-
-                        if matched_email:
-                            selected_email = matched_email
-                            recipient = self._extract_email_address(selected_email.get("from", ""))
-                            logger.debug("Mapeado destinatário por correspondência de nome (Eduardo Carvalho): %s", recipient)
-                        else:
-                            # Em modo não-GitHub podemos ainda inferir o mais recente humano elegível
-                            if not is_github_query:
-                                for e in filtered_emails:
-                                    email_addr = self._extract_email_address(e.get("from", ""))
-                                    if email_addr and is_valid_human_domain(email_addr):
-                                        selected_email = e
-                                        if not recipient:
-                                            recipient = email_addr
-                                            logger.debug("Inferido destinatário humano recente: %s", recipient)
-                                        break
-                    # Se precisamos de histórico para gerar corpo e ainda não temos selected_email,
-                    # tentamos escolher o email mais relevante para regenerar o corpo.
-                    if filtered_emails and needs_history_for_body and selected_email is None:
-                        try:
-                            # Prefer a email that melhor corresponde à query
-                            selected_email = self._pick_most_relevant(query or "", filtered_emails)
-                        except Exception:
-                            selected_email = None
-
-                        if selected_email is None:
-                            # Fallback: escolhe o primeiro email humano elegível
-                            for e in filtered_emails:
-                                email_addr = self._extract_email_address(e.get("from", ""))
-                                if email_addr and is_valid_human_domain(email_addr):
-                                    selected_email = e
-                                    break
+                        from_val = e.get("from") or ""
+                        email_addr = self._extract_email_address(from_val)
+                        if email_addr and self._is_valid_human_email(email_addr):
+                            display_name = from_val.split("<")[0].replace('"', '').strip() if "<" in from_val else from_val.replace('"', '').strip()
+                            if self._is_name_match(display_name, query_text):
+                                if is_github_query:
+                                    is_eduardo_carvalho = (
+                                        re.search(r"\beduardo\b", display_name, re.IGNORECASE) and 
+                                        re.search(r"\bcarvalho\b", display_name, re.IGNORECASE)
+                                    )
+                                    if not is_eduardo_carvalho:
+                                        continue
+                                recipient = email_addr
+                                selected_email = e
+                                logger.debug("Mapeado destinatário por correspondência de nome: %s", recipient)
+                                break
             except Exception as exc:
-                logger.debug("Não foi possível aceder ao histórico de emails: %s", exc)
+                logger.debug("Não foi possível aceder ao histórico de emails para resolver nome: %s", exc)
 
-        if not recipient:
-            return self.failure(
-                "Não consegui identificar um destinatário claro. "
-                "Confirma o destinatário ou inclui um email de destino no pedido."
-            )
-        # Se for um pedido relacionado com GitHub e tivermos repositórios injetados, USE-OS como única fonte de verdade para o corpo
+        # 3. Handle body and subject resolution
         if is_github_query and injected_repos:
-            subject = intent.subject or f"Resumo dos repositórios ({len(injected_repos)})"
-            # Gerar corpo determinístico a partir da lista de repositórios — sem recorrer à Inbox
+            subject = subject or f"Resumo dos repositórios ({len(injected_repos)})"
             repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
             body = (
                 f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
                 "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
             )
         else:
-            subject = intent.subject
-            if not subject or subject.strip() == "" or subject.strip().lower() == "sem assunto":
+            if not subject or subject.strip().lower() in ("", "sem assunto"):
                 if selected_email:
                     orig_subject = selected_email.get("subject") or "Sem assunto"
                     if orig_subject.lower().startswith("re:"):
@@ -283,22 +242,38 @@ class EmailAgent(BaseAgent):
                 else:
                     subject = "Sem assunto"
 
-            body = (intent.body or "").strip()
-            if len(body) < 3:
+            body_str = (body or "").strip()
+            if len(body_str) < 3:
+                if not selected_email and not is_github_query:
+                    try:
+                        reader = GmailReader(self.token, on_token_refresh=self.on_token_refresh)
+                        emails = await reader.get_recent_emails(max_results=15)
+                        if emails:
+                            filtered_emails = []
+                            for e in emails:
+                                email_addr = self._extract_email_address(e.get("from", ""))
+                                if email_addr and self._is_valid_human_email(email_addr):
+                                    filtered_emails.append(e)
+                            if filtered_emails:
+                                selected_email = self._pick_most_relevant(query_text, filtered_emails)
+                    except Exception as exc:
+                        logger.debug("Erro ao tentar buscar email relevante para regenerar corpo: %s", exc)
+
                 if selected_email:
                     try:
                         logger.debug("Corpo ausente. A regenerar corpo usando LLM.")
-                        body = await self._regenerate_body(query or intent.reasoning or "", selected_email)
-                        body = body.strip()
+                        body = await self._regenerate_body(query_text or intent.reasoning or "", selected_email)
+                        body = (body or "").strip()
                     except Exception as exc:
                         logger.exception("Erro ao regenerar corpo do email")
                         return self.failure(f"Erro ao gerar corpo do email: {exc}")
 
-            if len(body) < 3:
-                return self.failure(
-                    "Não encontrei o texto do email para enviar. "
-                    "Fornece o corpo da mensagem ou confirma o rascunho que deve ser enviado."
-                )
+        # 4. Strict validation check
+        if not recipient or not self._is_valid_human_email(recipient) or not body or len(body.strip()) < 3:
+            return self.failure(
+                "Não consegui resgatar o e-mail do destinatário no histórico. "
+                "Por favor, me informe o endereço correto para o envio."
+            )
 
         try:
             sender = GmailSender(self.token, on_token_refresh=self.on_token_refresh)
@@ -423,6 +398,49 @@ class EmailAgent(BaseAgent):
         match = re.search(r"[\w.+-]+@[\w-]+\.\w+", text)
         return match.group(0) if match else None
 
+    def _is_valid_human_email(self, email_addr: str) -> bool:
+        if not email_addr:
+            return False
+        email_addr = email_addr.strip().lower()
+        if not re.fullmatch(r"[\w.+-]+@[\w-]+\.\w+", email_addr):
+            return False
+        parts = email_addr.split("@")
+        if len(parts) != 2:
+            return False
+        user_part, domain_part = parts[0], parts[1]
+        
+        # Strict anti-spam list: rejects temu, temuemail, teste, promo, spam, updates, no-reply, noreply, etc.
+        rejected_keywords = [
+            "reply", "notification", "daemon", "bounce", "alert", "system", 
+            "support", "info", "news", "newsletter", "marketing", "billing",
+            "bot", "no-reply", "noreply", "service", "automated", "status",
+            "temu", "temuemail", "teste", "promo", "spam", "update", "offers", 
+            "newsletter", "feed"
+        ]
+        
+        for keyword in rejected_keywords:
+            if keyword in user_part or keyword in domain_part:
+                return False
+        return True
+
+    def _is_name_match(self, display_name: str, query: str) -> bool:
+        if not display_name or not query:
+            return False
+        name_clean = display_name.split("<")[0].replace('"', '').strip().lower()
+        if not name_clean:
+            return False
+        
+        name_words = [w for w in re.findall(r"\b[a-zA-Z0-9áéíóúâêîôûãõçàèìòùäëïöüÿñ]+\b", name_clean) if len(w) >= 2]
+        if not name_words:
+            return False
+            
+        query_clean = query.lower()
+        
+        if len(name_words) >= 2:
+            return all(word in query_clean for word in name_words)
+            
+        return any(rf"\b{re.escape(word)}\b" for word in name_words if re.search(rf"\b{re.escape(word)}\b", query_clean))
+
     async def _summarise_relevant(self, query: str, emails: list[dict]) -> str:
         listing = "\n".join(
             f"{i + 1}. De: {e['from']} | Assunto: {e['subject']} | {e['snippet'][:120]}"
@@ -506,3 +524,67 @@ class EmailAgent(BaseAgent):
             max_tokens=400,
         )
         return resp.choices[0].message.content or ""
+
+    def _is_confirmation_query(self, query: str) -> bool:
+        q = query.strip().lower()
+        if not q:
+            return False
+        # Se for curta (até 8 palavras)
+        if len(q.split()) <= 8:
+            return True
+        # Se contiver apenas comandos de envio/confirmação com referências ao contexto (como "sobre a receita", "do bolo", etc.)
+        # mas sem especificar novos destinatários ou corpos detalhados
+        confirmation_patterns = [
+            r"\benvie\b", r"\benviar\b", r"\bmande\b", r"\bmandar\b", r"\bdispare\b", 
+            r"\bconfirma\b", r"\bconfirmar\b", r"\bmanda\b", r"\bvai\b", r"\benvia\b"
+        ]
+        has_action = any(re.search(pat, q) for pat in confirmation_patterns)
+        if has_action and "@" not in q and len(q) < 45:
+            return True
+        return False
+
+    async def _extract_from_previous_turn(self, history: List[dict]) -> dict:
+        # We need the user's previous message and the assistant's previous message
+        # In history (newest to oldest):
+        # history[0] is typically the assistant's last message
+        # history[1] is typically the user's last message
+        prev_assistant = None
+        prev_user = None
+        for msg in history:
+            role = msg.get("role")
+            if role == "assistant" and prev_assistant is None:
+                prev_assistant = msg.get("content")
+            elif role == "user" and prev_user is None:
+                prev_user = msg.get("content")
+            if prev_assistant is not None and prev_user is not None:
+                break
+        
+        if not prev_assistant and not prev_user:
+            return {}
+
+        prompt = f"""PREVIOUS USER QUERY:
+{prev_user or "None"}
+
+PREVIOUS ASSISTANT RESPONSE:
+{prev_assistant or "None"}
+"""
+        try:
+            resp = await self.client.chat.completions.create(
+                model=self.settings.groq_model,
+                messages=[
+                    {"role": "system", "content": _EXTRACTION_SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=500,
+            )
+            raw = resp.choices[0].message.content or ""
+            if "```" in raw:
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            data = json.loads(raw)
+            return data
+        except Exception as e:
+            logger.warning("Failed to extract context from previous turn: %s", e)
+            return {}

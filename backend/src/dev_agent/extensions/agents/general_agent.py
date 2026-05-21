@@ -7,7 +7,7 @@ Agente de conversa geral — pesquisa ao vivo via Groq Compound (GROQ_API_KEY).
 
 
 import re
-
+from typing import Optional, List
 
 
 from groq import AsyncGroq
@@ -125,7 +125,7 @@ class GeneralConversationAgent(BaseAgent):
 
 
 
-    async def run(self, query: str) -> AgentResult:
+    async def run(self, query: str, history: Optional[List[dict]] = None) -> AgentResult:
 
         try:
 

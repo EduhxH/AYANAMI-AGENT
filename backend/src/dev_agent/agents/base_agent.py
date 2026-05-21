@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Optional, List
 from dev_agent.core.models import AgentResult, AgentType
 
 
@@ -8,7 +9,7 @@ class BaseAgent(ABC):
     agent_type: AgentType  
     
     @abstractmethod
-    async def run(self, query: str) -> AgentResult:
+    async def run(self, query: str, history: Optional[List[dict]] = None) -> AgentResult:
         """Executa o agente e devolve um resultado."""
         pass
     

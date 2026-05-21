@@ -1,4 +1,5 @@
 import re
+from typing import Optional, List
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.models import AgentType, AgentResult
@@ -22,7 +23,7 @@ class GitHubAgent(BaseAgent):
         self.token = token
         self.github_username = github_username
 
-    async def run(self, query: str) -> AgentResult:
+    async def run(self, query: str, history: Optional[List[dict]] = None) -> AgentResult:
         print(f"[GITHUB_AGENT] run() chamado")
         print(f"[GITHUB_AGENT] Query: {query!r}")
         print(f"[GITHUB_AGENT] Token: {'***' if self.token else 'NULL'}")

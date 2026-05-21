@@ -33,7 +33,7 @@ class Orchestrator:
         dispatcher = Dispatcher(user_data, self.on_google_token_refresh)
         print(f"[ORCHESTRATOR] Iniciando Dispatcher com {len(agents)} agentes...")
         
-        results = await dispatcher.run(request.query, agents)
+        results = await dispatcher.run(request.query, agents, history=history)
         print(f"[ORCHESTRATOR] Dispatcher completado com {len(results)} resultados")
 
         summary = await self._generate_summary(request.query, results, history)

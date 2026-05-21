@@ -18,7 +18,7 @@ class Dispatcher:
         self.user_data = user_data
         self.on_google_token_refresh = on_google_token_refresh
 
-    async def run(self, query: str, agents: List[AgentType]) -> List[AgentResult]:
+    async def run(self, query: str, agents: List[AgentType], history: Optional[List[dict]] = None) -> List[AgentResult]:
         print(f"[DISPATCHER] run() chamado com {len(agents)} agentes")
         print(f"[DISPATCHER] Query: {query!r}")
         print(f"[DISPATCHER] user_data keys: {list(self.user_data.keys())}")
@@ -33,7 +33,7 @@ class Dispatcher:
             print("[DISPATCHER] Fluxo especial: GitHub mencionado — executando GitHubAgent primeiro")
             gh_agent = self._get_agent(AgentType.GITHUB)
             if gh_agent:
-                gh_result = await gh_agent.run(query)
+                gh_result = await gh_agent.run(query, history=history)
                 agent_results.append(gh_result)
                 # Prepare EmailAgent com contexto do GitHub
                 email_agent = self._get_agent(AgentType.EMAIL)
@@ -55,7 +55,7 @@ class Dispatcher:
                         agent = self._get_agent(agent_type) if agent_type != AgentType.EMAIL else email_agent
                         if agent:
                             print(f"[DISPATCHER] Agente {agent_type.value} criado com sucesso")
-                            tasks.append(agent.run(query))
+                            tasks.append(agent.run(query, history=history))
                             active_agents.append(agent_type)
                         else:
                             print(f"[DISPATCHER] FALHA: Agente {agent_type.value} retornou None")
@@ -83,7 +83,7 @@ class Dispatcher:
             agent = self._get_agent(agent_type)
             if agent:
                 print(f"[DISPATCHER] Agente {agent_type.value} criado com sucesso")
-                tasks.append(agent.run(query))
+                tasks.append(agent.run(query, history=history))
                 active_agents.append(agent_type)
             else:
                 print(f"[DISPATCHER] FALHA: Agente {agent_type.value} retornou None")
