@@ -1,4 +1,5 @@
 import re
+import base64
 import httpx
 from typing import Optional
 
@@ -86,3 +87,39 @@ class GitHubWriter:
                 raise ValueError(
                     f"Erro ao deletar repositório: {response.status_code} — {content.get('message', response.text)}"
                 )
+
+    async def create_or_update_file(
+        self,
+        owner: str,
+        repo: str,
+        path: str,
+        content: str,
+        message: str = "Create/update file via Ayanami Agent",
+        sha: Optional[str] = None,
+    ) -> dict:
+        url = f"{self.BASE_URL}/repos/{owner}/{repo}/contents/{path}"
+        
+        # Base64 encode content
+        encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        
+        payload = {
+            "message": message,
+            "content": encoded_content,
+        }
+        if sha:
+            payload["sha"] = sha
+            
+        async with httpx.AsyncClient() as client:
+            response = await client.put(url, headers=self.headers, json=payload)
+            
+            try:
+                res_json = response.json()
+            except Exception:
+                res_json = {}
+                
+            if response.status_code not in (200, 201):
+                api_message = res_json.get("message") or response.text
+                raise ValueError(
+                    f"GitHub API error {response.status_code} writing file: {api_message}"
+                )
+            return res_json

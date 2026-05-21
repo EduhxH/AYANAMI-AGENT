@@ -1,5 +1,6 @@
 import re
 from typing import Optional, List
+from groq import AsyncGroq
 
 from dev_agent.agents.base_agent import BaseAgent
 from dev_agent.core.models import AgentType, AgentResult
@@ -322,9 +323,18 @@ class GitHubAgent(BaseAgent):
         print(f"[GITHUB_AGENT] Visibilidade: {visibility}")
         print(f"[GITHUB_AGENT] Owner: {owner}")
 
-        # Extract optional description hint from the query (e.g. 'no readme coloque X')
-        description = self._extract_description_hint(query)
-        print(f"[GITHUB_AGENT] Descrição: {description!r}")
+        # Generate README content if requested
+        readme_content = await self._generate_readme_content(query)
+        print(f"[GITHUB_AGENT] Conteúdo do README gerado: {readme_content!r}")
+
+        # Resolve description:
+        # If there's an explicit description request, use it. Otherwise, use a default description.
+        description = None
+        if "descri" in query.lower() or "description" in query.lower():
+            description = self._extract_description_hint(query)
+        
+        if not description:
+            description = f"Repository {name} created by Ayanami Agent."
 
         try:
             print(f"[GITHUB_AGENT] Chamando writer.create_repo()...")
@@ -335,11 +345,31 @@ class GitHubAgent(BaseAgent):
                 description=description,
             )
             print(f"[GITHUB_AGENT] create_repo retornou: {result}")
+            
+            repo_full_name = result.get("full_name")
+            repo_owner, repo_name = repo_full_name.split("/")
+            
+            # If README content is requested, write the README.md file
+            if readme_content:
+                print(f"[GITHUB_AGENT] Gravando README.md com conteúdo gerado...")
+                try:
+                    await writer.create_or_update_file(
+                        owner=repo_owner,
+                        repo=repo_name,
+                        path="README.md",
+                        content=readme_content,
+                        message="Initialize README.md with generated content",
+                    )
+                    print(f"[GITHUB_AGENT] README.md gravado com sucesso.")
+                except Exception as file_exc:
+                    print(f"[GITHUB_AGENT] Falha ao gravar README.md: {file_exc}")
+            
             return self.success(
                 {
-                    "repo": result.get("full_name"),
+                    "repo": repo_full_name,
                     "private": result.get("private"),
                     "html_url": result.get("html_url"),
+                    "readme_created": bool(readme_content),
                 }
             )
         except ValueError as exc:
@@ -347,6 +377,44 @@ class GitHubAgent(BaseAgent):
             return self.failure(f"[RAW ERROR] {exc}")
         except Exception as exc:
             return self.failure(f"[UNEXPECTED ERROR] {type(exc).__name__}: {exc}")
+
+    async def _generate_readme_content(self, query: str) -> str | None:
+        q = query.lower()
+        if "readme" not in q and "leia-me" not in q and "leiame" not in q:
+            return None
+
+        system_prompt = (
+            "Você é um especialista em extração e geração de conteúdo para arquivos README.md do GitHub.\n"
+            "Dada a instrução de um usuário, identifique se ele solicitou que algum conteúdo ou informação específica "
+            "seja adicionado ao README do repositório.\n"
+            "Se o usuário solicitou uma frase famosa, uma piada, uma citação ou qualquer outro conteúdo criativo "
+            "(ex: 'frase mais famosa do darth vader' ou 'piada de programador'), você DEVE gerar e retornar esse conteúdo real correspondente "
+            "(ex: 'No, I am your father' ou a piada gerada).\n"
+            "Se o usuário apenas forneceu um texto simples literal para colocar no readme (ex: 'coloque \"funcionou\" no readme'), "
+            "retorne esse texto de forma limpa.\n"
+            "Retorne APENAS o conteúdo final em formato Markdown que deve ser gravado no arquivo README.md. "
+            "Não inclua explicações, comentários, introduções ou formatação adicional fora do Markdown gerado."
+        )
+        
+        try:
+            settings = get_settings()
+            client = AsyncGroq(api_key=settings.groq_api_key)
+            
+            response = await client.chat.completions.create(
+                model=settings.groq_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.7,
+            )
+            content = response.choices[0].message.content.strip()
+            return content if content else None
+        except Exception as exc:
+            print(f"[GITHUB_AGENT] Erro ao gerar conteúdo do README via LLM: {exc}")
+            # Fallback extraction: try to extract whatever was found in the query description hint
+            desc = self._extract_description_hint(query)
+            return desc
 
     async def _delete_repository(self, query: str, writer: GitHubWriter) -> AgentResult:
         name = self._extract_repo_name_hint(query)

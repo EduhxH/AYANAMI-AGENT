@@ -591,6 +591,76 @@ def test_github_agent_logic():
     assert agent._resolve_repository_visibility("cria um repo, not public") == "private"
     assert agent._resolve_repository_visibility("create a repo, don't make it public") == "private"
     
+    # 4. Test run/creation flow with LLM README generation and file writing
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    
+    async def run_github_tests():
+        settings_mock = MagicMock()
+        settings_mock.groq_api_key = "fake_key"
+        settings_mock.groq_model = "fake_model"
+        
+        with patch("dev_agent.agents.github_agent.get_settings", return_value=settings_mock), \
+             patch("dev_agent.agents.github_agent.AsyncGroq") as mock_groq_class:
+            
+            mock_groq = mock_groq_class.return_value
+            mock_completion = AsyncMock()
+            # Mocks the LLM generating "No, I am your father" in response to Darth Vader query
+            mock_completion.choices = [
+                MagicMock(message=MagicMock(content="No, I am your father"))
+            ]
+            mock_groq.chat.completions.create = AsyncMock(return_value=mock_completion)
+            
+            mock_writer = MagicMock()
+            mock_writer.create_repo = AsyncMock(return_value={
+                "full_name": "testuser/teste923",
+                "private": True,
+                "html_url": "https://github.com/testuser/teste923"
+            })
+            mock_writer.create_or_update_file = AsyncMock(return_value={"status": "success"})
+            
+            # Setup a temporary patch for writer lookup inside run
+            with patch("dev_agent.agents.github_agent.GitHubWriter", return_value=mock_writer):
+                res = await agent.run(
+                    query="faça um repo para mim com nome de \"teste923\" e n deixe ele publico, no readme coloque a frase mais famosa do darth vader...",
+                    history=None
+                )
+            
+            # Assert result is success
+            assert res.success is True, f"GitHub run failed: {res.error}"
+            assert res.data["repo"] == "testuser/teste923"
+            assert res.data["private"] is True
+            assert res.data["readme_created"] is True
+            
+            # Verify writer was called correctly
+            mock_writer.create_repo.assert_called_once_with(
+                name="teste923",
+                private=True,
+                owner="testuser",
+                description="Repository teste923 created by Ayanami Agent."
+            )
+            
+            # Verify create_or_update_file was called with the generated Darth Vader quote
+            mock_writer.create_or_update_file.assert_called_once_with(
+                owner="testuser",
+                repo="teste923",
+                path="README.md",
+                content="No, I am your father",
+                message="Initialize README.md with generated content"
+            )
+            
+            print("[OK] Teste end-to-end do fluxo de criacao de repo com LLM README passou!")
+            return True
+            
+    try:
+        if not asyncio.run(run_github_tests()):
+            return False
+    except Exception as e:
+        print(f"[ERRO] Falha ao rodar testes assíncronos do GitHubAgent: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+        
     print("[OK] Todos os testes do GitHubAgent (Intenção e Parser) passaram!")
     return True
 

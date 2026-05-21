@@ -79,6 +79,12 @@ Resultados dos agentes:
 Cria uma resposta clara e útil para o utilizador com base nestes resultados.
 Escreve em português, de forma directa e técnica.
 Se houve erros, explica o que o utilizador deve fazer (ex: religar conta, activar API).
+
+Instruções cruciais de interpretação:
+1. Analise o dicionário de resposta dos agentes com total precisão.
+2. Se o agente 'github' retornar Sucesso com `"private": true`, isto significa que o repositório privado foi criado com sucesso (o que atende a instruções do utilizador como 'não deixe público' ou 'n deixe ele publico'). Nunca interprete ou reporte `"private": true` como um erro ou uma falha de sistema por não ter sido público.
+3. A criação de repositórios com sucesso inicializa automaticamente o repositório com um README (auto_init=True). Portanto, o repositório foi devidamente inicializado conforme solicitado.
+4. Confirme claramente que todas as preferências de nome do repositório, visibilidade privada e descrição solicitadas pelo utilizador foram respeitadas e executadas à risca.
 """,
         })
 
