@@ -83,11 +83,39 @@ class GitHubAgent(BaseAgent):
 
                 repo_list = [repo.get("full_name", repo.get("name")) for repo in accessible_repos]
                 print(f"[GITHUB_AGENT] Operação global aplicada: {len(repo_list)} repositórios encontrados")
+
+                blocks = []
+                for repo in accessible_repos:
+                    name = repo.get("full_name") or repo.get("name")
+                    lang = repo.get("language") or "None"
+                    desc = repo.get("description") or "No description provided"
+                    
+                    topics_list = repo.get("topics") or []
+                    topics_str = ", ".join(topics_list) if topics_list else "None"
+                    
+                    updated = repo.get("updated_at")
+                    if updated and len(updated) >= 10:
+                        updated_str = updated[:10]
+                    else:
+                        updated_str = "Unknown"
+                    
+                    block = (
+                        f"Repository: {name}\n"
+                        f"Language: {lang}\n"
+                        f"Description: {desc}\n"
+                        f"Topics: {topics_str}\n"
+                        f"Last updated: {updated_str}"
+                    )
+                    blocks.append(block)
+                
+                repo_context_text = "\n\n".join(blocks)
+
                 return self.success(
                     {
                         "global_operation": True,
                         "repo_count": len(repo_list),
                         "repositories": repo_list,
+                        "repo_context_text": repo_context_text,
                         "message": "Nenhuma referência específica a um repositório foi detectada; mostrando repositórios acessíveis.",
                     }
                 )

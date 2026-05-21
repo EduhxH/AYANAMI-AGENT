@@ -15,3 +15,5 @@ python-multipart>=0.0.9
 
 [dev]
 uvicorn[standard]
+pytest>=8.0
+pytest-asyncio>=0.24

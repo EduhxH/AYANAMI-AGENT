@@ -280,7 +280,16 @@ class LocalRepoReader:
             for entry in os.listdir(self.root)[:max_repos]:
                 full = os.path.join(self.root, entry)
                 if os.path.isdir(full):
-                    repos.append({"name": entry, "full_name": entry, "path": full})
+                    repos.append({
+                        "name": entry,
+                        "full_name": entry,
+                        "path": full,
+                        "description": None,
+                        "language": None,
+                        "stargazers_count": 0,
+                        "updated_at": None,
+                        "topics": []
+                    })
         except Exception:
             pass
         return repos

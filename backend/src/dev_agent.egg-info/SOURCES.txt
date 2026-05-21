@@ -16,6 +16,7 @@ src/dev_agent/api/app.py
 src/dev_agent/api/dependencies.py
 src/dev_agent/api/routes/anime.py
 src/dev_agent/api/routes/auth.py
+src/dev_agent/api/routes/files.py
 src/dev_agent/api/routes/health.py
 src/dev_agent/api/routes/history.py
 src/dev_agent/api/routes/preferences.py
@@ -33,10 +34,12 @@ src/dev_agent/core/models.py
 src/dev_agent/database/__init__.py
 src/dev_agent/database/connection.py
 src/dev_agent/database/models/analysis.py
+src/dev_agent/database/models/chat_message.py
 src/dev_agent/database/models/email_record.py
 src/dev_agent/database/models/user.py
 src/dev_agent/database/models/user_preferences.py
 src/dev_agent/database/repositories/analyses.py
+src/dev_agent/database/repositories/chat_messages.py
 src/dev_agent/database/repositories/emails.py
 src/dev_agent/database/repositories/user_preferences.py
 src/dev_agent/database/repositories/users.py
@@ -54,8 +57,12 @@ src/dev_agent/preferences/context.py
 src/dev_agent/preferences/hooks.py
 src/dev_agent/preferences/prompt.py
 src/dev_agent/preferences/storage.py
+src/dev_agent/tools/__init__.py
+src/dev_agent/tools/email/__init__.py
 src/dev_agent/tools/email/reader.py
 src/dev_agent/tools/email/sender.py
+src/dev_agent/tools/github/__init__.py
 src/dev_agent/tools/github/analyser.py
 src/dev_agent/tools/github/reader.py
 src/dev_agent/tools/github/writer.py
+tests/test_integration.py
