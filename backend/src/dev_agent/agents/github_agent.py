@@ -1,4 +1,5 @@
 import re
+import httpx
 from typing import Optional, List
 from groq import AsyncGroq
 
@@ -343,6 +344,7 @@ class GitHubAgent(BaseAgent):
                 private=visibility == "private",
                 owner=owner,
                 description=description,
+                auto_init=True,
             )
             print(f"[GITHUB_AGENT] create_repo retornou: {result}")
             
@@ -352,6 +354,21 @@ class GitHubAgent(BaseAgent):
             # If README content is requested, write the README.md file
             if readme_content:
                 print(f"[GITHUB_AGENT] Gravando README.md com conteúdo gerado...")
+                
+                # Fast GET request to find the existing README.md SHA if initialized by auto_init
+                existing_sha = None
+                try:
+                    async with httpx.AsyncClient() as client:
+                        url = f"{writer.BASE_URL}/repos/{repo_owner}/{repo_name}/contents/README.md"
+                        resp = await client.get(url, headers=writer.headers)
+                        if resp.status_code == 200:
+                            existing_sha = resp.json().get("sha")
+                            print(f"[GITHUB_AGENT] Encontrado SHA existente para README.md: {existing_sha}")
+                        else:
+                            print(f"[GITHUB_AGENT] README.md não retornado com status 200: {resp.status_code}")
+                except Exception as sha_exc:
+                    print(f"[GITHUB_AGENT] Falha ao buscar SHA do README.md existente: {sha_exc}")
+
                 try:
                     await writer.create_or_update_file(
                         owner=repo_owner,
@@ -359,6 +376,7 @@ class GitHubAgent(BaseAgent):
                         path="README.md",
                         content=readme_content,
                         message="Initialize README.md with generated content",
+                        sha=existing_sha,
                     )
                     print(f"[GITHUB_AGENT] README.md gravado com sucesso.")
                 except Exception as file_exc:

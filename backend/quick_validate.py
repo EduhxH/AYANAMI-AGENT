@@ -600,8 +600,19 @@ def test_github_agent_logic():
         settings_mock.groq_api_key = "fake_key"
         settings_mock.groq_model = "fake_model"
         
+        # Mock httpx.AsyncClient for the SHA lookup request
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json = MagicMock(return_value={"sha": "mocked_sha_123"})
+        
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        
         with patch("dev_agent.agents.github_agent.get_settings", return_value=settings_mock), \
-             patch("dev_agent.agents.github_agent.AsyncGroq") as mock_groq_class:
+             patch("dev_agent.agents.github_agent.AsyncGroq") as mock_groq_class, \
+             patch("dev_agent.agents.github_agent.httpx.AsyncClient", return_value=mock_client):
             
             mock_groq = mock_groq_class.return_value
             mock_completion = AsyncMock()
@@ -612,6 +623,8 @@ def test_github_agent_logic():
             mock_groq.chat.completions.create = AsyncMock(return_value=mock_completion)
             
             mock_writer = MagicMock()
+            mock_writer.BASE_URL = "https://api.github.com"
+            mock_writer.headers = {"Authorization": "Bearer fake_token"}
             mock_writer.create_repo = AsyncMock(return_value={
                 "full_name": "testuser/teste923",
                 "private": True,
@@ -637,7 +650,8 @@ def test_github_agent_logic():
                 name="teste923",
                 private=True,
                 owner="testuser",
-                description="Repository teste923 created by Ayanami Agent."
+                description="Repository teste923 created by Ayanami Agent.",
+                auto_init=True
             )
             
             # Verify create_or_update_file was called with the generated Darth Vader quote
@@ -646,7 +660,8 @@ def test_github_agent_logic():
                 repo="teste923",
                 path="README.md",
                 content="No, I am your father",
-                message="Initialize README.md with generated content"
+                message="Initialize README.md with generated content",
+                sha="mocked_sha_123"
             )
             
             print("[OK] Teste end-to-end do fluxo de criacao de repo com LLM README passou!")
