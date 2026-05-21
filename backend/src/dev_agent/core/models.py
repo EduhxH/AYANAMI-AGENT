@@ -21,6 +21,8 @@ class AgentResult(BaseModel):
     success: bool
     data: dict
     error: Optional[str] = None
+    message: Optional[str] = None
+    errors: Optional[List[str]] = None
 
 
 class OrchestratorResult(BaseModel):

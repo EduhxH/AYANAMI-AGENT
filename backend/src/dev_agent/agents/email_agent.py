@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import traceback
 from typing import Awaitable, Callable, Literal, Optional, List
 
 from groq import AsyncGroq
@@ -101,12 +102,18 @@ class EmailAgent(BaseAgent):
         self,
         token: str | None,
         on_token_refresh: Optional[TokenRefreshCallback] = None,
-        github_repositories: Optional[list] = None,
+        github_repositories: Optional[List] = None,
+        github_summary: Optional[str] = None,
     ) -> None:
         self.token = token
         self.on_token_refresh = on_token_refresh
         # Optional context injected by the Orchestrator/Dispatcher
-        self.github_repositories = github_repositories
+        self.github_repositories: Optional[List] = None
+        self.github_summary: Optional[str] = None
+        if github_repositories is not None:
+            self.github_repositories = github_repositories
+        if github_summary is not None:
+            self.github_summary = github_summary
         self.settings = get_settings()
         self.client = AsyncGroq(api_key=self.settings.groq_api_key)
 
@@ -115,26 +122,39 @@ class EmailAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def run(self, query: str, history: Optional[List[dict]] = None) -> AgentResult:
-        if not self.token:
-            return self.failure("Gmail não está ligado. Liga a tua conta primeiro.")
+        try:
+            if not self.token:
+                return self.failure("Gmail não está ligado. Liga a tua conta primeiro.")
 
-        intent = await self._classify(query, history=history)
-        if intent is None:
-            return self.failure("Não consegui interpretar o pedido. Tenta ser mais específico.")
+            intent = await self._classify(query, history=history)
+            if intent is None:
+                return self.failure("Não consegui interpretar o pedido. Tenta ser mais específico.")
 
-        logger.debug("EmailAgent intent=%s reasoning=%s", intent.intent, intent.reasoning)
+            logger.debug("EmailAgent intent=%s reasoning=%s", intent.intent, intent.reasoning)
 
-        # 1. Creative or general generation flow (ex: recipes, textos do zero, piadas)
-        if self._is_creative_or_general_generation(query):
-            return await self._handle_creative_generation(query, intent, history=history)
+            # 1. Creative or general generation flow (ex: recipes, textos do zero, piadas)
+            if self._is_creative_or_general_generation(query):
+                return await self._handle_creative_generation(query, intent, history=history)
 
-        match intent.intent:
-            case "send":
-                return await self._handle_send(intent, query, history=history)
-            case "draft":
-                return await self._handle_draft(query, intent)
-            case "read":
-                return await self._handle_read(query)
+            match intent.intent:
+                case "send":
+                    return await self._handle_send(intent, query, history=history)
+                case "draft":
+                    return await self._handle_draft(query, intent)
+                case "read":
+                    return await self._handle_read(query)
+                case _:
+                    return self.failure(f"Intenção desconhecida: {intent.intent}")
+        except Exception as e:
+            logger.exception("EmailAgent run failed")
+            return AgentResult(
+                agent=self.agent_type,
+                success=False,
+                data={},
+                error=str(e),
+                message=str(e),
+                errors=[traceback.format_exc()],
+            )
 
     # ------------------------------------------------------------------
     # Intent classification (single LLM call)
@@ -251,6 +271,7 @@ class EmailAgent(BaseAgent):
         query_text = query or ""
         is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query_text, re.IGNORECASE))
         injected_repos = getattr(self, "github_repositories", None)
+        github_summary = getattr(self, "github_summary", None)
 
         recipient = intent.recipient
         if not recipient and query_text:
@@ -310,13 +331,20 @@ class EmailAgent(BaseAgent):
                     logger.debug("Não foi possível aceder ao histórico de emails para resolver nome: %s", exc)
 
             # Handle body and subject resolution
-            if is_github_query and injected_repos:
-                subject = subject or f"Resumo dos repositórios ({len(injected_repos)})"
-                repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
-                body = (
-                    f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
-                    "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
-                )
+            if is_github_query and (injected_repos or github_summary):
+                if injected_repos:
+                    subject = subject or f"Resumo dos repositórios ({len(injected_repos)})"
+                    repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
+                    body = (
+                        f"Segue em baixo a lista de repositórios solicitados (fonte: GitHubAgent).\n\n{repos_list_text}\n\n"
+                        "Este corpo foi gerado exclusivamente com base na lista de repositórios fornecida; nenhumas informações da caixa de entrada foram usadas."
+                    )
+                else:
+                    subject = subject or "Resumo GitHub"
+                    body = (
+                        f"Segue em baixo o resumo solicitado (fonte: GitHubAgent).\n\n{github_summary}\n\n"
+                        "Este corpo foi gerado exclusivamente com base no contexto GitHub fornecido; nenhumas informações da caixa de entrada foram usadas."
+                    )
             else:
                 if not subject or subject.strip().lower() in ("", "sem assunto"):
                     if selected_email:
@@ -397,19 +425,28 @@ class EmailAgent(BaseAgent):
                 ),
             })
 
-        # Se estivermos em modo GitHub com repositórios injetados, gere um rascunho baseado EXCLUSIVAMENTE nessa lista
+        # Se estivermos em modo GitHub com contexto injetado, gere um rascunho baseado EXCLUSIVAMENTE nesse contexto
         injected_repos = getattr(self, "github_repositories", None)
+        github_summary = getattr(self, "github_summary", None)
         is_github_query = bool(re.search(r"\bgithub\b|\breposit[oó]rio", query, re.IGNORECASE))
-        if is_github_query and injected_repos:
-            repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
-            draft_text = (
-                f"Segue uma proposta de email com base na lista de repositórios fornecida:\n\n{repos_list_text}\n\n"
-                "Nota: este rascunho foi gerado apenas a partir dos repositórios providenciados pelo GitHubAgent; nenhuma informação da inbox foi utilizada."
-            )
+        if is_github_query and (injected_repos or github_summary):
+            if injected_repos:
+                repos_list_text = "\n".join(f"- {r}" for r in injected_repos)
+                draft_text = (
+                    f"Segue uma proposta de email com base na lista de repositórios fornecida:\n\n{repos_list_text}\n\n"
+                    "Nota: este rascunho foi gerado apenas a partir dos repositórios providenciados pelo GitHubAgent; nenhuma informação da inbox foi utilizada."
+                )
+                context_subject = f"Resumo de {len(injected_repos)} repositórios"
+            else:
+                draft_text = (
+                    f"Segue uma proposta de email com base no resumo GitHub fornecido:\n\n{github_summary}\n\n"
+                    "Nota: este rascunho foi gerado apenas a partir do contexto providenciado pelo GitHubAgent; nenhuma informação da inbox foi utilizada."
+                )
+                context_subject = "Resumo GitHub"
             return self.success({
                 "action": "draft",
                 "context_from": "GitHubAgent",
-                "context_subject": f"Resumo de {len(injected_repos)} repositórios",
+                "context_subject": context_subject,
                 "proposed_response": draft_text,
                 "instructions": (
                     "Sugestão gerada a partir dos repositórios; para enviar, confirma o destinatário e o corpo no próximo pedido."
